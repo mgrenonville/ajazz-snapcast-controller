@@ -16,8 +16,8 @@ impl ConnectionSettings {
         let content = fs::read_to_string(&path)
             .with_context(|| format!("Failed to read config file: {:?}", path.as_ref()))?;
 
-        let settings: ConnectionSettings = toml::from_str(&content)
-            .context("Failed to parse TOML configuration")?;
+        let settings: ConnectionSettings =
+            toml::from_str(&content).context("Failed to parse TOML configuration")?;
 
         settings.validate()?;
 
@@ -33,10 +33,7 @@ impl ConnectionSettings {
         );
 
         // Validate port is in valid range (1-65535)
-        anyhow::ensure!(
-            self.server.port > 0,
-            "Server port must be greater than 0"
-        );
+        anyhow::ensure!(self.server.port > 0, "Server port must be greater than 0");
 
         // Validate client_id is not empty
         anyhow::ensure!(

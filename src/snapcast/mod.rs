@@ -2,9 +2,9 @@
 
 use thiserror::Error;
 
-pub mod client;
+// pub mod client;
 pub mod types;
-pub mod commands;
+// pub mod commands;
 
 /// Snapcast-related errors
 #[derive(Debug, Error)]

@@ -65,7 +65,7 @@
 
 ### Implementation for User Story 1
 
-- [ ] T020 [P] [US1] Implement USB HID device detection in src/hardware/device.rs using ajazz_sdk
+- [x] T020 [P] [US1] Implement USB HID device detection in src/hardware/device.rs using ajazz_sdk
 - [ ] T021 [P] [US1] Implement Snapcast server TCP connection in src/snapcast/client.rs using snapcast_control
 - [ ] T022 [US1] Implement Server.GetStatus JSON-RPC call in src/snapcast/client.rs
 - [ ] T023 [US1] Parse Server.GetStatus response to extract room state in src/snapcast/client.rs

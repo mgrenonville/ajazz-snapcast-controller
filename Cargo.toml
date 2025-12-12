@@ -14,7 +14,7 @@ toml = "0.8"
 # Error handling
 anyhow = "1"
 thiserror = "1"
-ajazz-sdk = "0.2.1"
+ajazz-sdk = {version = "0.2.1", features = ["async"] }
 snapcast-control = "0.1.0"
 
 # External crates (USB HID and Snapcast integration)

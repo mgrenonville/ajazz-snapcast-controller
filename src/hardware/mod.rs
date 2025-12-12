@@ -1,10 +1,11 @@
 // Hardware module - USB HID controller integration
 
+use ajazz_sdk::AjazzError;
 use thiserror::Error;
 
 pub mod device;
 pub mod events;
-pub mod display;
+// pub mod display;
 
 /// Hardware-related errors
 #[derive(Debug, Error)]
@@ -26,4 +27,11 @@ pub enum HardwareError {
 
     #[error("ajazz_sdk error: {0}")]
     SdkError(String),
+}
+
+impl From<AjazzError> for HardwareError {
+    fn from(value: AjazzError) -> Self {
+
+        Self::SdkError(value.to_string())
+    }
 }
