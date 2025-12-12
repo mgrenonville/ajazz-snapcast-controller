@@ -102,38 +102,119 @@ impl DeviceManager {
     }
 }
 
-/// Continuously monitor for device connection/disconnection
-pub async fn device_monitor_loop(
-    mut manager: DeviceManager,
-    poll_interval: Duration,
-) -> Result<(), HardwareError> {
-    // Initial device detection
-    manager.wait_for_device(poll_interval).await;
+/// Connection handler for managing hardware device connection lifecycle
+pub struct DeviceConnectionHandler {
+    manager: DeviceManager,
+    base_poll_interval: Duration,
+    max_poll_interval: Duration,
+    current_poll_interval: Duration,
+}
 
-    // Monitor loop
-    loop {
-        tokio::time::sleep(poll_interval).await;
-
-        if manager.is_connected() {
-            // Check if device is still connected
-            if let Some(device) = manager.device() {
-                match device
-                    .keep_alive()
-                    .await
-                {
-                    Ok(_) => {
-                        // Device still connected
-                        continue;
-                    }
-                    Err(_) => {
-                        // Device disconnected
-                        manager.handle_disconnection();
-                    }
-                }
-            }
-
-            // Wait for reconnection
-            manager.wait_for_device(poll_interval).await;
+impl DeviceConnectionHandler {
+    /// Create a new device connection handler
+    pub fn new(manager: DeviceManager, base_poll_interval: Duration) -> Self {
+        Self {
+            manager,
+            base_poll_interval,
+            max_poll_interval: Duration::from_secs(10),
+            current_poll_interval: base_poll_interval,
         }
     }
+
+    /// Attempt to detect and connect to device
+    async fn try_connect(&mut self) -> Result<(), HardwareError> {
+        match self.manager.detect_device().await {
+            Ok(_) => {
+                // Reset poll interval on successful connection
+                self.current_poll_interval = self.base_poll_interval;
+                Ok(())
+            }
+            Err(e) => {
+                // Exponential backoff on failure
+                self.current_poll_interval = std::cmp::min(
+                    self.current_poll_interval * 2,
+                    self.max_poll_interval,
+                );
+                Err(e)
+            }
+        }
+    }
+
+    /// Wait for device connection with exponential backoff
+    async fn ensure_connected(&mut self) {
+        while !self.manager.is_connected() {
+            match self.try_connect().await {
+                Ok(_) => {
+                    println!("Hardware device connected successfully");
+                    break;
+                }
+                Err(HardwareError::DeviceNotFound) => {
+                    // Device not found is expected, just wait
+                    tokio::time::sleep(self.current_poll_interval).await;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Device connection failed: {}, retrying in {:?}",
+                        e, self.current_poll_interval
+                    );
+                    tokio::time::sleep(self.current_poll_interval).await;
+                }
+            }
+        }
+    }
+
+    /// Check if device is still alive
+    async fn check_device_alive(&self) -> bool {
+        if let Some(device) = self.manager.device() {
+            match device.keep_alive().await {
+                Ok(_) => true,
+                Err(_) => false,
+            }
+        } else {
+            false
+        }
+    }
+
+    /// Handle connection/disconnection events and reconnection
+    pub async fn handle_connection_lifecycle(&mut self) -> Result<(), HardwareError> {
+        // Initial connection
+        self.ensure_connected().await;
+
+        loop {
+            // Ensure we're connected before checking device health
+            if !self.manager.is_connected() {
+                self.ensure_connected().await;
+            }
+
+            // Wait before next health check
+            tokio::time::sleep(self.base_poll_interval).await;
+
+            // Check if device is still alive
+            if self.manager.is_connected() && !self.check_device_alive().await {
+                eprintln!("Hardware device health check failed");
+                self.manager.handle_disconnection();
+                // Will reconnect on next iteration
+            }
+        }
+    }
+
+    /// Get reference to the manager
+    pub fn manager(&self) -> &DeviceManager {
+        &self.manager
+    }
+
+    /// Get mutable reference to the manager
+    pub fn manager_mut(&mut self) -> &mut DeviceManager {
+        &mut self.manager
+    }
+}
+
+/// Continuously monitor for device connection/disconnection
+/// This is a convenience function that creates a DeviceConnectionHandler and runs it
+pub async fn device_monitor_loop(
+    manager: DeviceManager,
+    poll_interval: Duration,
+) -> Result<(), HardwareError> {
+    let mut handler = DeviceConnectionHandler::new(manager, poll_interval);
+    handler.handle_connection_lifecycle().await
 }

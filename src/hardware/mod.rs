@@ -5,7 +5,7 @@ use thiserror::Error;
 
 pub mod device;
 pub mod events;
-// pub mod display;
+pub mod display;
 
 /// Hardware-related errors
 #[derive(Debug, Error)]
