@@ -14,10 +14,13 @@ toml = "0.8"
 # Error handling
 anyhow = "1"
 thiserror = "1"
+
+# External crates
 ajazz-sdk = {version = "0.2.1", features = ["async"] }
 snapcast-control = "0.1.0"
 icon-to-image = "0.1.6"
 imageproc = "0.25.0"
+dirs = "5"
 
 # External crates (USB HID and Snapcast integration)
 # Note: These dependencies need to be configured with actual paths or git URLs
