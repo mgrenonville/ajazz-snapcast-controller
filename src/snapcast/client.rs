@@ -253,40 +253,120 @@ impl SnapcastClient {
     }
 }
 
-/// Message loop for receiving Snapcast server events
-pub async fn message_loop(
-    mut client: SnapcastClient,
-    reconnect_interval: std::time::Duration,
-) -> Result<(), SnapcastError> {
-    // Initial connection
-    client.wait_for_connection(reconnect_interval).await;
+/// Connection handler for managing Snapcast server connection lifecycle
+pub struct ConnectionHandler {
+    client: SnapcastClient,
+    base_retry_interval: std::time::Duration,
+    max_retry_interval: std::time::Duration,
+    current_retry_interval: std::time::Duration,
+}
 
-    // Request initial server status
-    let _ = client.get_server_status().await;
-
-    loop {
-        if !client.is_connected() {
-            // Wait for reconnection
-            client.wait_for_connection(reconnect_interval).await;
-
-            // Request server status after reconnection
-            let _ = client.get_server_status().await;
+impl ConnectionHandler {
+    /// Create a new connection handler
+    pub fn new(
+        client: SnapcastClient,
+        base_retry_interval: std::time::Duration,
+    ) -> Self {
+        Self {
+            client,
+            base_retry_interval,
+            max_retry_interval: std::time::Duration::from_secs(30),
+            current_retry_interval: base_retry_interval,
         }
+    }
 
-        // Receive and process messages
-        match client.receive_message().await {
-            Ok(Some(())) => {
-                // Message processed successfully
-                continue;
-            }
-            Ok(None) => {
-                // Connection closed, reconnect
-                continue;
+    /// Attempt to connect to the server
+    async fn try_connect(&mut self) -> Result<(), SnapcastError> {
+        match self.client.connect().await {
+            Ok(_) => {
+                // Reset retry interval on successful connection
+                self.current_retry_interval = self.base_retry_interval;
+                Ok(())
             }
             Err(e) => {
-                eprintln!("Error receiving message: {}", e);
-                client.handle_disconnection();
+                // Exponential backoff on failure
+                self.current_retry_interval = std::cmp::min(
+                    self.current_retry_interval * 2,
+                    self.max_retry_interval,
+                );
+                Err(e)
             }
         }
     }
+
+    /// Wait for connection with exponential backoff
+    async fn ensure_connected(&mut self) {
+        while !self.client.is_connected() {
+            match self.try_connect().await {
+                Ok(_) => {
+                    // Request initial server status after connection
+                    if let Err(e) = self.client.get_server_status().await {
+                        eprintln!("Failed to get server status: {}", e);
+                        self.client.handle_disconnection();
+                        tokio::time::sleep(self.current_retry_interval).await;
+                        continue;
+                    }
+                    break;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Connection failed: {}, retrying in {:?}",
+                        e, self.current_retry_interval
+                    );
+                    tokio::time::sleep(self.current_retry_interval).await;
+                }
+            }
+        }
+    }
+
+    /// Handle connection/disconnection events and reconnection
+    pub async fn handle_connection_lifecycle(&mut self) -> Result<(), SnapcastError> {
+        // Initial connection
+        self.ensure_connected().await;
+
+        loop {
+            // Ensure we're connected before attempting to receive
+            if !self.client.is_connected() {
+                self.ensure_connected().await;
+            }
+
+            // Receive and process messages
+            match self.client.receive_message().await {
+                Ok(Some(())) => {
+                    // Message processed successfully
+                    continue;
+                }
+                Ok(None) => {
+                    // Connection closed, will reconnect on next iteration
+                    eprintln!("Server connection closed");
+                    continue;
+                }
+                Err(e) => {
+                    eprintln!("Error receiving message: {}", e);
+                    self.client.handle_disconnection();
+                    // Will reconnect on next iteration
+                }
+            }
+        }
+    }
+
+    /// Get reference to the client
+    pub fn client(&self) -> &SnapcastClient {
+        &self.client
+    }
+
+    /// Get mutable reference to the client
+    pub fn client_mut(&mut self) -> &mut SnapcastClient {
+        &mut self.client
+    }
+}
+
+/// Message loop for receiving Snapcast server events
+/// This is a convenience function that creates a ConnectionHandler and runs it
+pub async fn message_loop(
+    client: SnapcastClient,
+    reconnect_interval: std::time::Duration,
+) -> Result<(), SnapcastError> {
+    let mut handler = ConnectionHandler::new(client, reconnect_interval);
+    handler.handle_connection_lifecycle().await
 }
