@@ -296,21 +296,28 @@ impl ConnectionHandler {
 
     /// Wait for connection with exponential backoff
     async fn ensure_connected(&mut self) {
+        // T029: Display connecting message
+        println!("Connecting to server...");
+
         while !self.client.is_connected() {
             match self.try_connect().await {
                 Ok(_) => {
                     // Request initial server status after connection
                     if let Err(e) = self.client.get_server_status().await {
-                        eprintln!("Failed to get server status: {}", e);
+                        // T030: Display connection error
+                        eprintln!("Connection Error: Failed to get server status: {}", e);
                         self.client.handle_disconnection();
                         tokio::time::sleep(self.current_retry_interval).await;
                         continue;
                     }
+                    // T031: Connection success (room name will be shown by caller)
+                    println!("Connected to Snapcast server successfully");
                     break;
                 }
                 Err(e) => {
+                    // T030: Display connection error
                     eprintln!(
-                        "Connection failed: {}, retrying in {:?}",
+                        "Connection Error: {}, retrying in {:?}",
                         e, self.current_retry_interval
                     );
                     tokio::time::sleep(self.current_retry_interval).await;

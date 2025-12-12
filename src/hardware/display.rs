@@ -167,3 +167,100 @@ impl Default for DisplayManager {
         Self::new().expect("Failed to create DisplayManager")
     }
 }
+
+/// Connection status display helpers
+impl DisplayManager {
+    /// Display "Waiting for hardware..." message on all button screens (T028)
+    pub async fn show_waiting_for_hardware(
+        &self,
+        device: &Arc<AsyncAjazz>,
+    ) -> Result<(), HardwareError> {
+        // Display on button 0 (main status screen)
+        self.display_multiline_status(
+            device,
+            0,
+            &["Waiting for", "hardware..."],
+            14.0,
+        )
+        .await
+    }
+
+    /// Display "Connecting to server..." message during connection attempt (T029)
+    pub async fn show_connecting_to_server(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        server_address: &str,
+    ) -> Result<(), HardwareError> {
+        // Display on button 0 (main status screen)
+        self.display_multiline_status(
+            device,
+            0,
+            &["Connecting", "to server...", server_address],
+            12.0,
+        )
+        .await
+    }
+
+    /// Display connection error message on hardware screens (T030)
+    pub async fn show_connection_error(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        error_type: &str,
+    ) -> Result<(), HardwareError> {
+        // Display on button 0 (main status screen)
+        self.display_multiline_status(
+            device,
+            0,
+            &["Connection", "Error:", error_type],
+            12.0,
+        )
+        .await
+    }
+
+    /// Display room name and connection success on hardware screens (T031)
+    pub async fn show_connection_success(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        room_name: &str,
+    ) -> Result<(), HardwareError> {
+        // Display on button 0 (main status screen)
+        self.display_multiline_status(
+            device,
+            0,
+            &["Connected!", room_name],
+            14.0,
+        )
+        .await
+    }
+
+    /// Display full status layout with room info
+    pub async fn show_status_layout(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        room_name: &str,
+        server: &str,
+    ) -> Result<(), HardwareError> {
+        // Button 0: Mute status (placeholder)
+        self.display_status(device, 0, "Mute").await?;
+
+        // Button 1: Stream name (placeholder)
+        self.display_status(device, 1, "Stream").await?;
+
+        // Button 2: Volume (placeholder)
+        self.display_status(device, 2, "Volume").await?;
+
+        // Button 3: Connection status
+        self.display_multiline_status(device, 3, &["Connected"], 14.0)
+            .await?;
+
+        // Button 4: Server address
+        self.display_multiline_status(device, 4, &["Server:", server], 10.0)
+            .await?;
+
+        // Button 5: Room name
+        self.display_multiline_status(device, 5, &["Room:", room_name], 10.0)
+            .await?;
+
+        Ok(())
+    }
+}

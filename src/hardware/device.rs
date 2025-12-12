@@ -142,6 +142,9 @@ impl DeviceConnectionHandler {
 
     /// Wait for device connection with exponential backoff
     async fn ensure_connected(&mut self) {
+        // T028: Display waiting message on console (can't show on device before it's connected)
+        println!("Waiting for hardware...");
+
         while !self.manager.is_connected() {
             match self.try_connect().await {
                 Ok(_) => {
