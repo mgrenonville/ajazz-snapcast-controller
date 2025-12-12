@@ -2,7 +2,7 @@
 
 use thiserror::Error;
 
-// pub mod client;
+pub mod client;
 pub mod types;
 // pub mod commands;
 

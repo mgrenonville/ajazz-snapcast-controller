@@ -123,7 +123,6 @@ pub async fn device_monitor_loop(
                 {
                     Ok(_) => {
                         // Device still connected
-                        device.set_button_image_data(key, image)
                         continue;
                     }
                     Err(_) => {
