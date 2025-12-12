@@ -35,23 +35,23 @@
 
 ---
 
-## Phase 2: Foundational (Blocking Prerequisites)
+## Phase 2: Foundational (Blocking Prerequisites) ✅ COMPLETE
 
 **Purpose**: Core infrastructure that MUST be complete before ANY user story can be implemented
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T009 Create ConnectionSettings struct in src/config/settings.rs with serde derives
-- [ ] T010 Implement TOML config loading in src/config/settings.rs using serde and toml crates
-- [ ] T011 Implement config validation in src/config/settings.rs (server address, port range, non-empty client_id)
-- [ ] T012 Create error types module in src/hardware/mod.rs using thiserror (HardwareError enum)
-- [ ] T013 Create error types module in src/snapcast/mod.rs using thiserror (SnapcastError enum)
-- [ ] T014 Create RoomState struct in src/snapcast/types.rs with all fields from data-model.md
-- [ ] T015 [P] Create AudioStream struct in src/snapcast/types.rs with StreamStatus enum
-- [ ] T016 [P] Create HardwareEvent enum in src/hardware/events.rs (KnobRotated, ButtonPressed, etc.)
-- [ ] T017 [P] Create SnapcastEvent enum in src/snapcast/types.rs (ClientVolumeChanged, etc.)
-- [ ] T018 [P] Create ControllerCommand enum in src/controller/mapping.rs (SetVolume, SetMute, AssignStream)
-- [ ] T019 Create ApplicationState struct in src/controller/state.rs with all fields from data-model.md
+- [x] T009 Create ConnectionSettings struct in src/config/settings.rs with serde derives
+- [x] T010 Implement TOML config loading in src/config/settings.rs using serde and toml crates
+- [x] T011 Implement config validation in src/config/settings.rs (server address, port range, non-empty client_id)
+- [x] T012 Create error types module in src/hardware/mod.rs using thiserror (HardwareError enum)
+- [x] T013 Create error types module in src/snapcast/mod.rs using thiserror (SnapcastError enum)
+- [x] T014 Create RoomState struct in src/snapcast/types.rs with all fields from data-model.md
+- [x] T015 [P] Create AudioStream struct in src/snapcast/types.rs with StreamStatus enum
+- [x] T016 [P] Create HardwareEvent enum in src/hardware/events.rs (KnobRotated, ButtonPressed, etc.)
+- [x] T017 [P] Create SnapcastEvent enum in src/snapcast/types.rs (ClientVolumeChanged, etc.)
+- [x] T018 [P] Create ControllerCommand enum in src/controller/mapping.rs (SetVolume, SetMute, AssignStream)
+- [x] T019 Create ApplicationState struct in src/controller/state.rs with all fields from data-model.md
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 
