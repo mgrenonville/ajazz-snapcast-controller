@@ -73,10 +73,10 @@
 - [x] T025 [US1] Create hardware device connection handler in src/hardware/device.rs (handle DeviceConnected/Disconnected events)
 - [x] T026 [US1] Create Snapcast server connection handler in src/snapcast/client.rs (handle connection/disconnection)
 - [x] T027 [US1] Implement basic screen display for connection status in src/hardware/display.rs
-- [ ] T028 [US1] Display "Waiting for hardware..." message when controller not connected in src/hardware/display.rs
-- [ ] T029 [US1] Display "Connecting to server..." message during connection attempt in src/hardware/display.rs
-- [ ] T030 [US1] Display connection error messages on hardware screens in src/hardware/display.rs
-- [ ] T031 [US1] Display room name and connection success on hardware screens in src/hardware/display.rs
+- [x] T028 [US1] Display "Waiting for hardware..." message when controller not connected in src/hardware/display.rs
+- [x] T029 [US1] Display "Connecting to server..." message during connection attempt in src/hardware/display.rs
+- [x] T030 [US1] Display connection error messages on hardware screens in src/hardware/display.rs
+- [x] T031 [US1] Display room name and connection success on hardware screens in src/hardware/display.rs
 - [ ] T032 [US1] Implement main event loop in src/main.rs with tokio::main macro
 - [ ] T033 [US1] Create tokio task for hardware event listening in src/main.rs
 - [ ] T034 [US1] Create tokio task for Snapcast network event listening in src/main.rs
