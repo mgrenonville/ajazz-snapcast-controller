@@ -1,0 +1,21 @@
+[package]
+name = "snapcast-controller"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+# Error handling
+anyhow = "1"
+thiserror = "1"
+ajazz-sdk = "0.2.1"
+snapcast-control = "0.1.0"
+
+# External crates (USB HID and Snapcast integration)
+# Note: These dependencies need to be configured with actual paths or git URLs

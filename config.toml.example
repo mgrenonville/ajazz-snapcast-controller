@@ -1,0 +1,21 @@
+# Snapcast Controller Configuration Example
+# Copy this file to config.toml and update with your settings
+# Location: ~/.config/snapcast-controller/config.toml (Linux)
+
+[server]
+# Snapcast server IP address or hostname
+address = "192.168.1.100"
+
+# Snapcast JSON-RPC port (default: 1705)
+port = 1705
+
+[room]
+# Snapcast client ID for the room this controller manages
+# Must match the client ID from your Snapcast server configuration
+# Example client IDs: "living-room", "bedroom", "kitchen"
+client_id = "living-room"
+
+# Optional: Authentication (future feature)
+# [server.auth]
+# username = "admin"
+# password = "secret"

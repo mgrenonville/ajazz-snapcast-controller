@@ -1,0 +1,38 @@
+# Rust
+target/
+debug/
+release/
+*.rs.bk
+*.rlib
+*.prof*
+**/*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Config (keep example)
+config.toml
+!config.toml.example
+
+
+# Added by cargo
+
+/target

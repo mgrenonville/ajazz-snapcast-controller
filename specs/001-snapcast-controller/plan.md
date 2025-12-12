@@ -11,7 +11,7 @@ Build a desktop application that bridges a USB HID hardware controller (3 knobs,
 
 ## Technical Context
 
-**Language/Version**: Rust (stable channel, edition 2021 or later)
+**Language/Version**: Rust (stable channel, edition 2024)
 **Primary Dependencies**:
 - `ajazz_sdk` - USB HID hardware controller communication
 - `snapcast_control` - Snapcast server JSON-RPC API client
