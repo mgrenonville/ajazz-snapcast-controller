@@ -118,13 +118,12 @@ pub async fn device_monitor_loop(
             // Check if device is still connected
             if let Some(device) = manager.device() {
                 match device
-                    .get_reader()
-                    .read(poll_interval.as_millis() as f32)
+                    .keep_alive()
                     .await
                 {
                     Ok(_) => {
                         // Device still connected
-                        println!("Successfully connected");
+                        device.set_button_image_data(key, image)
                         continue;
                     }
                     Err(_) => {
