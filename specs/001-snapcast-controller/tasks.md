@@ -77,14 +77,14 @@
 - [x] T029 [US1] Display "Connecting to server..." message during connection attempt in src/hardware/display.rs
 - [x] T030 [US1] Display connection error messages on hardware screens in src/hardware/display.rs
 - [x] T031 [US1] Display room name and connection success on hardware screens in src/hardware/display.rs
-- [ ] T032 [US1] Implement main event loop in src/main.rs with tokio::main macro
-- [ ] T033 [US1] Create tokio task for hardware event listening in src/main.rs
-- [ ] T034 [US1] Create tokio task for Snapcast network event listening in src/main.rs
-- [ ] T035 [US1] Initialize ApplicationState with loaded config in src/main.rs
-- [ ] T036 [US1] Handle HardwareEvent::DeviceConnected in controller in src/controller/state.rs
-- [ ] T037 [US1] Handle SnapcastEvent::ServerReconnected in controller in src/controller/state.rs
+- [x] T032 [US1] Implement main event loop in src/main.rs with tokio::main macro
+- [x] T033 [US1] Create tokio task for hardware event listening in src/main.rs
+- [x] T034 [US1] Create tokio task for Snapcast network event listening in src/main.rs
+- [x] T035 [US1] Initialize ApplicationState with loaded config in src/main.rs
+- [x] T036 [US1] Handle HardwareEvent::DeviceConnected in controller in src/controller/state.rs
+- [x] T037 [US1] Handle SnapcastEvent::ServerReconnected in controller in src/controller/state.rs
 
-**Checkpoint**: At this point, User Story 1 should be fully functional and testable independently. Can verify USB hardware connection, Snapcast server connection, and room assignment.
+**Checkpoint**: At this point, User Story 1 should be fully functional and testable independently. Can verify USB hardware connection, Snapcast server connection, and room assignment. ✅ COMPLETE
 
 ---
 

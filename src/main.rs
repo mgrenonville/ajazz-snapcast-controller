@@ -56,7 +56,11 @@ async fn main() {
     // Note: Due to snapcast_control's State using OnceCell (not Sync),
     // we cannot spawn this as a separate task. Instead, we'll run the
     // connection logic in the main thread.
-    let snapcast_client = SnapcastClient::new(server_addr, snapcast_event_tx);
+    let snapcast_client = SnapcastClient::new(
+        server_addr,
+        config.room.client_id.clone(),
+        snapcast_event_tx,
+    );
     let snapcast_task = async move {
         let _ = snapcast::client::message_loop(snapcast_client, Duration::from_secs(2)).await;
     };
@@ -104,6 +108,20 @@ async fn handle_hardware_event(state: &mut ApplicationState, event: HardwareEven
         HardwareEvent::DeviceConnected => {
             println!("Hardware event: Device connected");
             state.set_hardware_connected(true);
+
+            // If server is already connected and we have room state, display it
+            if state.server_connected {
+                if let Some(room) = &state.room {
+                    println!(
+                        "  Displaying room '{}' status on hardware",
+                        room.name
+                    );
+                } else {
+                    println!("  Waiting for room state from server...");
+                }
+            } else {
+                println!("  Waiting for server connection...");
+            }
         }
         HardwareEvent::DeviceDisconnected => {
             println!("Hardware event: Device disconnected");
@@ -118,9 +136,35 @@ async fn handle_hardware_event(state: &mut ApplicationState, event: HardwareEven
 /// Handle Snapcast events (T037)
 async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEvent) {
     match event {
-        SnapcastEvent::ServerReconnected => {
+        SnapcastEvent::ServerReconnected { room, streams } => {
             println!("Snapcast event: Server reconnected");
             state.set_server_connected(true);
+
+            // Update streams
+            println!("  Received {} streams from server", streams.len());
+            state.update_streams(streams);
+
+            // Update room state
+            if let Some(room_state) = room {
+                println!(
+                    "  Room '{}' found - Volume: {}%, Muted: {}, Connected: {}",
+                    room_state.name,
+                    room_state.volume,
+                    room_state.muted,
+                    room_state.connected
+                );
+                state.update_room_state(room_state);
+
+                // If hardware is connected, we could display the status now
+                if state.hardware_connected {
+                    println!("  Ready to display on hardware");
+                }
+            } else {
+                println!(
+                    "  Warning: Room '{}' not found on server",
+                    state.config.room.client_id
+                );
+            }
         }
         SnapcastEvent::ServerDisconnected => {
             println!("Snapcast event: Server disconnected");

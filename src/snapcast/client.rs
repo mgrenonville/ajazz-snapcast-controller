@@ -10,6 +10,9 @@ pub struct SnapcastClient {
     /// Server address
     address: SocketAddr,
 
+    /// Client ID for this room
+    client_id: String,
+
     /// Active connection (None if disconnected)
     connection: Option<SnapcastConnection>,
 
@@ -21,10 +24,12 @@ impl SnapcastClient {
     /// Create a new Snapcast client
     pub fn new(
         address: SocketAddr,
+        client_id: String,
         event_tx: mpsc::UnboundedSender<SnapcastEvent>,
     ) -> Self {
         Self {
             address,
+            client_id,
             connection: None,
             event_tx,
         }
@@ -37,10 +42,19 @@ impl SnapcastClient {
 
         self.connection = Some(connection);
 
-        // Emit ServerReconnected event
-        let _ = self.event_tx.send(SnapcastEvent::ServerReconnected);
-
         Ok(())
+    }
+
+    /// Emit ServerReconnected event with room state and streams
+    fn emit_server_reconnected(&self) {
+        // Get room state and streams from the connection
+        let room = self.get_room_state(&self.client_id);
+        let streams = self.get_streams();
+
+        let _ = self.event_tx.send(SnapcastEvent::ServerReconnected {
+            room,
+            streams,
+        });
     }
 
     /// Check if client is currently connected
@@ -310,7 +324,9 @@ impl ConnectionHandler {
                         tokio::time::sleep(self.current_retry_interval).await;
                         continue;
                     }
-                    // T031: Connection success (room name will be shown by caller)
+
+                    // T031 & T037: Emit ServerReconnected event with room state
+                    self.client.emit_server_reconnected();
                     println!("Connected to Snapcast server successfully");
                     break;
                 }

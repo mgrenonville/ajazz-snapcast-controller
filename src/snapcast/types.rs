@@ -92,6 +92,9 @@ pub enum SnapcastEvent {
     /// Lost connection to Snapcast server
     ServerDisconnected,
 
-    /// Connection to Snapcast server restored
-    ServerReconnected,
+    /// Connection to Snapcast server restored with room state
+    ServerReconnected {
+        room: Option<RoomState>,
+        streams: Vec<AudioStream>,
+    },
 }
