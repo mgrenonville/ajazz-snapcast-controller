@@ -96,23 +96,23 @@
 
 ### Implementation for User Story 2
 
-- [ ] T038 [P] [US2] Implement JSON-RPC notification parsing in src/snapcast/client.rs
-- [ ] T039 [P] [US2] Subscribe to Client.OnVolumeChanged notifications in src/snapcast/client.rs
-- [ ] T040 [P] [US2] Subscribe to Stream.OnUpdate notifications in src/snapcast/client.rs
-- [ ] T041 [P] [US2] Subscribe to Group.OnStreamChanged notifications in src/snapcast/client.rs
-- [ ] T042 [US2] Implement screen layout for status page in src/hardware/display.rs (6 button screens)
-- [ ] T043 [US2] Render volume percentage on button screen 2 in src/hardware/display.rs
-- [ ] T044 [US2] Render mute status on button screen 0 in src/hardware/display.rs
-- [ ] T045 [US2] Render current stream name on button screen 1 in src/hardware/display.rs
-- [ ] T046 [US2] Render connection status on button screen 3 in src/hardware/display.rs
-- [ ] T047 [US2] Render server address on button screen 4 in src/hardware/display.rs
-- [ ] T048 [US2] Render room name on button screen 5 in src/hardware/display.rs
-- [ ] T049 [US2] Handle SnapcastEvent::ClientVolumeChanged in src/controller/state.rs (update RoomState)
-- [ ] T050 [US2] Handle SnapcastEvent::StreamChanged in src/controller/state.rs (update RoomState.stream_id)
-- [ ] T051 [US2] Handle Stream.OnUpdate notification in src/controller/state.rs (update AudioStream metadata)
-- [ ] T052 [US2] Trigger screen refresh when RoomState changes in src/controller/state.rs
-- [ ] T053 [US2] Implement screen update batching to avoid USB bandwidth saturation in src/hardware/display.rs
-- [ ] T054 [US2] Add 2-second timeout validation for state change → screen update in src/controller/state.rs
+- [x] T038 [P] [US2] Implement JSON-RPC notification parsing in src/snapcast/client.rs
+- [x] T039 [P] [US2] Subscribe to Client.OnVolumeChanged notifications in src/snapcast/client.rs
+- [x] T040 [P] [US2] Subscribe to Stream.OnUpdate notifications in src/snapcast/client.rs
+- [x] T041 [P] [US2] Subscribe to Group.OnStreamChanged notifications in src/snapcast/client.rs
+- [x] T042 [US2] Implement screen layout for status page in src/hardware/display.rs (6 button screens)
+- [x] T043 [US2] Render volume percentage on button screen 2 in src/hardware/display.rs
+- [x] T044 [US2] Render mute status on button screen 0 in src/hardware/display.rs
+- [x] T045 [US2] Render current stream name on button screen 1 in src/hardware/display.rs
+- [x] T046 [US2] Render connection status on button screen 3 in src/hardware/display.rs
+- [x] T047 [US2] Render server address on button screen 4 in src/hardware/display.rs
+- [x] T048 [US2] Render room name on button screen 5 in src/hardware/display.rs
+- [x] T049 [US2] Handle SnapcastEvent::ClientVolumeChanged in src/controller/state.rs (update RoomState)
+- [x] T050 [US2] Handle SnapcastEvent::StreamChanged in src/controller/state.rs (update RoomState.stream_id)
+- [x] T051 [US2] Handle Stream.OnUpdate notification in src/controller/state.rs (update AudioStream metadata)
+- [x] T052 [US2] Trigger screen refresh when RoomState changes in src/controller/state.rs
+- [x] T053 [US2] Implement screen update batching to avoid USB bandwidth saturation in src/hardware/display.rs
+- [x] T054 [US2] Add 2-second timeout validation for state change → screen update in src/controller/state.rs
 
 **Checkpoint**: At this point, User Stories 1 AND 2 should both work independently. Can monitor real-time audio status on hardware screens.
 

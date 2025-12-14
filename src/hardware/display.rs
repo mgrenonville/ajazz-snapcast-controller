@@ -6,6 +6,8 @@ use ajazz_sdk::AsyncAjazz;
 use imageproc::drawing::{draw_text_mut, text_size};
 use imageproc::image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
+use tokio::time::sleep;
 
 /// Screen dimensions for button displays (typical for Ajazz devices)
 const BUTTON_SCREEN_WIDTH: u32 = 80;
@@ -19,6 +21,9 @@ const TEXT_COLOR: Rgba<u8> = Rgba([255, 255, 255, 255]);
 
 /// Default background color (black)
 const BG_COLOR: Rgba<u8> = Rgba([0, 0, 0, 255]);
+
+/// T053: Delay between individual screen updates to prevent USB bandwidth saturation (milliseconds)
+const SCREEN_UPDATE_DELAY_MS: u64 = 50;
 
 /// Display manager for rendering to hardware screens
 pub struct DisplayManager {
@@ -40,6 +45,44 @@ impl DisplayManager {
     /// Create a blank screen image
     fn create_blank_image(&self) -> RgbaImage {
         ImageBuffer::from_pixel(BUTTON_SCREEN_WIDTH, BUTTON_SCREEN_HEIGHT, BG_COLOR)
+    }
+
+    /// Helper: Draw a label at the top of an image
+    fn draw_top_label(&self, image: &mut RgbaImage, label: &str, font_size: f32, y_offset: i32) {
+        let scale = PxScale::from(font_size);
+        let (width, _) = text_size(scale, &self.font, label);
+        let x = ((BUTTON_SCREEN_WIDTH as i32 - width as i32) / 2).max(0);
+        draw_text_mut(image, TEXT_COLOR, x, y_offset, scale, &self.font, label);
+    }
+
+    /// Helper: Draw centered text on an image
+    fn draw_centered_text(&self, image: &mut RgbaImage, text: &str, font_size: f32, y_offset: i32) {
+        let scale = PxScale::from(font_size);
+        let (width, height) = text_size(scale, &self.font, text);
+        let x = ((BUTTON_SCREEN_WIDTH as i32 - width as i32) / 2).max(0);
+        let y = ((BUTTON_SCREEN_HEIGHT as i32 - height as i32) / 2 + y_offset).max(y_offset.max(0));
+        draw_text_mut(image, TEXT_COLOR, x, y, scale, &self.font, text);
+    }
+
+    /// Helper: Send an image to a button screen
+    async fn send_image_to_button(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        button: u8,
+        image: RgbaImage,
+    ) -> Result<(), HardwareError> {
+        let dynamic_image = DynamicImage::ImageRgba8(image);
+        device
+            .set_button_image(button, dynamic_image)
+            .await
+            .map_err(|e| HardwareError::WriteError(e.to_string()))?;
+
+        device
+            .flush()
+            .await
+            .map_err(|e| HardwareError::WriteError(e.to_string()))?;
+
+        Ok(())
     }
 
     /// Render text centered on a blank screen
@@ -262,5 +305,234 @@ impl DisplayManager {
             .await?;
 
         Ok(())
+    }
+}
+
+/// Status page layout data
+/// T042: Screen layout for status page displaying room state across 6 button screens
+#[derive(Debug, Clone)]
+pub struct StatusPageLayout {
+    /// Mute status display text (button 0)
+    pub mute_status: String,
+
+    /// Current stream name (button 1)
+    pub stream_name: String,
+
+    /// Volume percentage display (button 2)
+    pub volume_display: String,
+
+    /// Connection status display (button 3)
+    pub connection_status: String,
+
+    /// Server address display (button 4)
+    pub server_address: String,
+
+    /// Room name display (button 5)
+    pub room_name: String,
+}
+
+impl StatusPageLayout {
+    /// Create a new status page layout from room state
+    /// T042: Build status page layout data structure
+    pub fn from_room_state(
+        room_name: &str,
+        server_address: &str,
+        volume: u8,
+        muted: bool,
+        connected: bool,
+        stream_name: Option<&str>,
+    ) -> Self {
+        // Button 0: Mute status
+        let mute_status = if muted {
+            "MUTED".to_string()
+        } else {
+            "Unmuted".to_string()
+        };
+
+        // Button 1: Current stream name
+        let stream_name = stream_name.unwrap_or("No Stream").to_string();
+
+        // Button 2: Volume percentage
+        let volume_display = format!("{}%", volume);
+
+        // Button 3: Connection status
+        let connection_status = if connected {
+            "Connected".to_string()
+        } else {
+            "Disconnected".to_string()
+        };
+
+        // Button 4: Server address
+        let server_address = server_address.to_string();
+
+        // Button 5: Room name
+        let room_name = room_name.to_string();
+
+        Self {
+            mute_status,
+            stream_name,
+            volume_display,
+            connection_status,
+            server_address,
+            room_name,
+        }
+    }
+}
+
+/// Status page rendering
+/// T042: Render complete status page layout to all 6 button screens
+impl DisplayManager {
+    /// Render the complete status page layout to all button screens
+    /// T042: Display status page across 6 button screens
+    /// T053: Includes batching delays to prevent USB bandwidth saturation
+    pub async fn render_status_page(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        layout: &StatusPageLayout,
+    ) -> Result<(), HardwareError> {
+        // Button 0: Mute status (T044)
+        let muted = layout.mute_status == "MUTED";
+        self.render_mute_screen(device, 0, muted).await?;
+        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+
+        // Button 1: Stream name (T045)
+        self.render_stream_screen(device, 1, &layout.stream_name).await?;
+        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+
+        // Button 2: Volume percentage (T043)
+        self.render_volume_screen(device, 2, layout.volume_display.trim_end_matches('%').parse().unwrap_or(0))
+            .await?;
+        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+
+        // Button 3: Connection status (T046)
+        let connected = layout.connection_status == "Connected";
+        self.render_connection_screen(device, 3, connected).await?;
+        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+
+        // Button 4: Server address (T047)
+        self.render_server_screen(device, 4, &layout.server_address).await?;
+        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+
+        // Button 5: Room name (T048)
+        self.render_room_screen(device, 5, &layout.room_name).await?;
+
+        Ok(())
+    }
+
+    /// Render volume percentage on button screen 2
+    /// T043: Display volume with large percentage text and label
+    pub async fn render_volume_screen(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        button: u8,
+        volume: u8,
+    ) -> Result<(), HardwareError> {
+        let mut image = self.create_blank_image();
+        self.draw_top_label(&mut image, "VOLUME", 10.0, 5);
+        self.draw_centered_text(&mut image, &format!("{}%", volume), 24.0, 5);
+        self.send_image_to_button(device, button, image).await
+    }
+
+    /// Render mute status on button screen 0
+    /// T044: Display mute status with clear visual indication
+    pub async fn render_mute_screen(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        button: u8,
+        muted: bool,
+    ) -> Result<(), HardwareError> {
+        let mut image = self.create_blank_image();
+        self.draw_top_label(&mut image, "MUTE", 12.0, 8);
+        self.draw_centered_text(&mut image, if muted { "ON" } else { "OFF" }, 22.0, 5);
+        self.send_image_to_button(device, button, image).await
+    }
+
+    /// Render current stream name on button screen 1
+    /// T045: Display stream name with label
+    pub async fn render_stream_screen(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        button: u8,
+        stream_name: &str,
+    ) -> Result<(), HardwareError> {
+        let mut image = self.create_blank_image();
+        self.draw_top_label(&mut image, "STREAM", 10.0, 5);
+
+        // Truncate stream name if too long
+        let display_name = if stream_name.len() > 12 {
+            format!("{}...", &stream_name[0..9])
+        } else {
+            stream_name.to_string()
+        };
+
+        self.draw_centered_text(&mut image, &display_name, 14.0, 5);
+        self.send_image_to_button(device, button, image).await
+    }
+
+    /// Render connection status on button screen 3
+    /// T046: Display connection status with visual indicator
+    pub async fn render_connection_screen(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        button: u8,
+        connected: bool,
+    ) -> Result<(), HardwareError> {
+        let mut image = self.create_blank_image();
+        self.draw_top_label(&mut image, "STATUS", 10.0, 5);
+        self.draw_centered_text(&mut image, if connected { "OK" } else { "DISC" }, 20.0, 5);
+        self.send_image_to_button(device, button, image).await
+    }
+
+    /// Render server address on button screen 4
+    /// T047: Display server address with label
+    pub async fn render_server_screen(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        button: u8,
+        server_address: &str,
+    ) -> Result<(), HardwareError> {
+        let mut image = self.create_blank_image();
+        self.draw_top_label(&mut image, "SERVER", 10.0, 5);
+
+        // Split server address into multiple lines if needed (IP:port format)
+        if server_address.contains(':') {
+            let parts: Vec<&str> = server_address.split(':').collect();
+            let scale = PxScale::from(11.0);
+            let line_height = 14;
+            let start_y = 28;
+
+            for (i, part) in parts.iter().enumerate() {
+                let (width, _) = text_size(scale, &self.font, part);
+                let x = ((BUTTON_SCREEN_WIDTH as i32 - width as i32) / 2).max(0);
+                let y = start_y + (i as i32 * line_height);
+                draw_text_mut(&mut image, TEXT_COLOR, x, y, scale, &self.font, part);
+            }
+        } else {
+            self.draw_centered_text(&mut image, server_address, 11.0, 5);
+        }
+
+        self.send_image_to_button(device, button, image).await
+    }
+
+    /// Render room name on button screen 5
+    /// T048: Display room name with label
+    pub async fn render_room_screen(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        button: u8,
+        room_name: &str,
+    ) -> Result<(), HardwareError> {
+        let mut image = self.create_blank_image();
+        self.draw_top_label(&mut image, "ROOM", 12.0, 8);
+
+        // Truncate room name if too long
+        let display_name = if room_name.len() > 12 {
+            format!("{}...", &room_name[0..9])
+        } else {
+            room_name.to_string()
+        };
+
+        self.draw_centered_text(&mut image, &display_name, 14.0, 5);
+        self.send_image_to_button(device, button, image).await
     }
 }

@@ -1,6 +1,6 @@
 // Snapcast client - TCP connection and communication with Snapcast server
 
-use crate::snapcast::{types::SnapcastEvent, SnapcastError};
+use crate::snapcast::{SnapcastError, types::SnapcastEvent};
 use snapcast_control::{ClientError, SnapcastConnection};
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
@@ -37,8 +37,7 @@ impl SnapcastClient {
 
     /// Connect to Snapcast server
     pub async fn connect(&mut self) -> Result<(), SnapcastError> {
-        let connection = SnapcastConnection::open(self.address)
-            .await;
+        let connection = SnapcastConnection::open(self.address).await;
 
         self.connection = Some(connection);
 
@@ -51,10 +50,9 @@ impl SnapcastClient {
         let room = self.get_room_state(&self.client_id);
         let streams = self.get_streams();
 
-        let _ = self.event_tx.send(SnapcastEvent::ServerReconnected {
-            room,
-            streams,
-        });
+        let _ = self
+            .event_tx
+            .send(SnapcastEvent::ServerReconnected { room, streams });
     }
 
     /// Check if client is currently connected
@@ -101,9 +99,7 @@ impl SnapcastClient {
             ClientError::Io(e) => SnapcastError::ConnectionFailed(e.to_string()),
             ClientError::Snapcast(e) => SnapcastError::RpcError(e.to_string()),
             ClientError::Deserialization(e) => SnapcastError::InvalidResponse(e.to_string()),
-            ClientError::JsonDeserialization(e) => {
-                SnapcastError::InvalidResponse(e.to_string())
-            }
+            ClientError::JsonDeserialization(e) => SnapcastError::InvalidResponse(e.to_string()),
             ClientError::Unknown(e) => SnapcastError::ControlError(e),
         }
     }
@@ -122,6 +118,10 @@ impl SnapcastClient {
             .await
             .map_err(Self::convert_error)?;
 
+        let _ = connection.recv().await.ok_or_else(|| {
+            SnapcastError::ConnectionFailed("could not read from stream".to_string())
+        })?;
+
         Ok(())
     }
 
@@ -130,11 +130,16 @@ impl SnapcastClient {
     pub fn get_room_state(&self, client_id: &str) -> Option<crate::snapcast::types::RoomState> {
         let connection = self.connection.as_ref()?;
 
+        println!("clients: {}", connection.state.clients.len());
+
         // Get client info from state
         let client = connection.state.clients.get(client_id)?;
 
         // Find which group the client belongs to
-        let group = connection.state.groups.iter()
+        let group = connection
+            .state
+            .groups
+            .iter()
             .find(|g| g.value().clients.contains(client_id))?;
 
         // Build RoomState from client and group info
@@ -153,7 +158,10 @@ impl SnapcastClient {
     pub fn find_group_for_client(&self, client_id: &str) -> Option<String> {
         let connection = self.connection.as_ref()?;
 
-        connection.state.groups.iter()
+        connection
+            .state
+            .groups
+            .iter()
             .find(|g| g.value().clients.contains(client_id))
             .map(|g| g.key().clone())
     }
@@ -167,7 +175,10 @@ impl SnapcastClient {
             None => return Vec::new(),
         };
 
-        connection.state.streams.iter()
+        connection
+            .state
+            .streams
+            .iter()
             .filter_map(|entry| {
                 let stream = entry.value().as_ref()?;
 
@@ -180,7 +191,10 @@ impl SnapcastClient {
 
                 // Extract stream name from URI
                 // Try to get name from query params first, otherwise use path
-                let name = stream.uri.query.get("name")
+                let name = stream
+                    .uri
+                    .query
+                    .get("name")
                     .cloned()
                     .unwrap_or_else(|| stream.uri.path.clone());
 
@@ -243,14 +257,19 @@ impl SnapcastClient {
 
     /// Receive and process messages from server
     pub async fn receive_message(&mut self) -> Result<Option<()>, SnapcastError> {
+        use snapcast_control::ValidMessage;
+
         let connection = self
             .connection
             .as_mut()
             .ok_or_else(|| SnapcastError::ConnectionFailed("Not connected".to_string()))?;
 
         match connection.recv().await {
-            Some(Ok(_message)) => {
-                // Message received and processed
+            Some(Ok(message)) => {
+                // Check if this is a notification we care about
+                if let ValidMessage::Notification { method, .. } = message {
+                    self.handle_notification(*method);
+                }
                 // The snapcast_control library handles state updates automatically
                 Ok(Some(()))
             }
@@ -265,6 +284,103 @@ impl SnapcastClient {
             }
         }
     }
+
+    /// Handle Snapcast server notifications and emit events
+    /// T038-T041: Parse notifications and emit events to the event channel
+    fn handle_notification(&self, notification: snapcast_control::Notification) {
+        use snapcast_control::Notification;
+
+        match notification {
+            // T039: Client.OnVolumeChanged - Volume or mute status changed
+            Notification::ClientOnVolumeChanged { params } => {
+                let volume = params.volume.percent.min(100) as u8;
+                let muted = params.volume.muted;
+
+                let _ = self.event_tx.send(SnapcastEvent::ClientVolumeChanged {
+                    client_id: params.id,
+                    volume,
+                    muted,
+                });
+            }
+
+            // T041: Group.OnStreamChanged - Client assigned to different stream
+            // Note: This gives us the group ID, but we need to map it to client IDs
+            // For now, we'll check if our client is in this group
+            Notification::GroupOnStreamChanged { params } => {
+                // Check if our client is in this group
+                if let Some(connection) = &self.connection {
+                    if let Some(group) = connection.state.groups.get(&params.id) {
+                        // Check if our client is in this group
+                        if group.clients.contains(&self.client_id) {
+                            let _ = self.event_tx.send(SnapcastEvent::StreamChanged {
+                                client_id: self.client_id.clone(),
+                                stream_id: params.stream_id,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // T040 & T051: Stream.OnUpdate - Stream metadata or status changed
+            Notification::StreamOnUpdate { params } => {
+                // The snapcast_control library automatically updates connection.state.streams
+                // We also emit an event so the application can update its cached stream data
+
+                // Get the updated stream from the connection state
+                if let Some(connection) = &self.connection {
+                    if let Some(stream_entry) = connection.state.streams.get(&params.id) {
+                        if let Some(stream) = stream_entry.value().as_ref() {
+                            // Convert to our AudioStream type
+                            let status = match stream.status {
+                                snapcast_control::stream::StreamStatus::Playing => {
+                                    crate::snapcast::types::StreamStatus::Playing
+                                }
+                                snapcast_control::stream::StreamStatus::Idle => {
+                                    crate::snapcast::types::StreamStatus::Idle
+                                }
+                                _ => crate::snapcast::types::StreamStatus::Unknown,
+                            };
+
+                            let name = stream
+                                .uri
+                                .query
+                                .get("name")
+                                .cloned()
+                                .unwrap_or_else(|| stream.uri.path.clone());
+
+                            let audio_stream = crate::snapcast::types::AudioStream {
+                                stream_id: stream.id.clone(),
+                                name,
+                                status,
+                                metadata: None, // Metadata fields are private
+                            };
+
+                            let _ = self.event_tx.send(SnapcastEvent::StreamUpdate {
+                                stream_id: params.id.clone(),
+                                stream: audio_stream,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Client connection events
+            Notification::ClientOnConnect { params } => {
+                let _ = self
+                    .event_tx
+                    .send(SnapcastEvent::ClientConnected { client_id: params.id });
+            }
+
+            Notification::ClientOnDisconnect { params } => {
+                let _ = self.event_tx.send(SnapcastEvent::ClientDisconnected {
+                    client_id: params.id,
+                });
+            }
+
+            // Other notifications are handled by the library's internal state
+            _ => {}
+        }
+    }
 }
 
 /// Connection handler for managing Snapcast server connection lifecycle
@@ -277,10 +393,7 @@ pub struct ConnectionHandler {
 
 impl ConnectionHandler {
     /// Create a new connection handler
-    pub fn new(
-        client: SnapcastClient,
-        base_retry_interval: std::time::Duration,
-    ) -> Self {
+    pub fn new(client: SnapcastClient, base_retry_interval: std::time::Duration) -> Self {
         Self {
             client,
             base_retry_interval,
@@ -299,10 +412,8 @@ impl ConnectionHandler {
             }
             Err(e) => {
                 // Exponential backoff on failure
-                self.current_retry_interval = std::cmp::min(
-                    self.current_retry_interval * 2,
-                    self.max_retry_interval,
-                );
+                self.current_retry_interval =
+                    std::cmp::min(self.current_retry_interval * 2, self.max_retry_interval);
                 Err(e)
             }
         }

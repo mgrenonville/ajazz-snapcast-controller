@@ -80,7 +80,26 @@ async fn main() {
 
             // Process Snapcast events
             Some(snap_event) = snapcast_event_rx.recv() => {
-                handle_snapcast_event(&mut app_state, snap_event).await;
+                let needs_refresh = handle_snapcast_event(&mut app_state, snap_event).await;
+
+                // T052: Trigger screen refresh when RoomState changes
+                if needs_refresh && app_state.needs_screen_refresh() {
+                    // TODO: Implement actual screen refresh
+                    // This will require access to the hardware device, which is currently
+                    // managed in a separate task. We'll implement this in future tasks when
+                    // we add the display manager integration with the hardware task.
+
+                    // T054: Track time since state change for latency validation
+                    if let Some(elapsed_ms) = app_state.time_since_state_change() {
+                        println!("  [TODO] Screen refresh needed ({}ms since state change) - will be implemented with hardware display integration", elapsed_ms);
+                    } else {
+                        println!("  [TODO] Screen refresh needed - will be implemented with hardware display integration");
+                    }
+
+                    // When screen refresh is actually implemented, we'll call:
+                    // app_state.mark_screen_update_completed();
+                    // app_state.validate_screen_update_latency();
+                }
             }
 
             // Run Snapcast message loop (non-blocking poll)
@@ -133,8 +152,9 @@ async fn handle_hardware_event(state: &mut ApplicationState, event: HardwareEven
     }
 }
 
-/// Handle Snapcast events (T037)
-async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEvent) {
+/// Handle Snapcast events (T037, T049-T052)
+/// Returns true if screen refresh is needed
+async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEvent) -> bool {
     match event {
         SnapcastEvent::ServerReconnected { room, streams } => {
             println!("Snapcast event: Server reconnected");
@@ -158,6 +178,7 @@ async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEven
                 // If hardware is connected, we could display the status now
                 if state.hardware_connected {
                     println!("  Ready to display on hardware");
+                    return true; // T052: Trigger screen refresh
                 }
             } else {
                 println!(
@@ -165,13 +186,46 @@ async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEven
                     state.config.room.client_id
                 );
             }
+            false
         }
         SnapcastEvent::ServerDisconnected => {
             println!("Snapcast event: Server disconnected");
             state.set_server_connected(false);
+            false
+        }
+        // T049: Handle volume/mute changes
+        SnapcastEvent::ClientVolumeChanged { client_id, volume, muted } => {
+            println!("Snapcast event: Volume changed for client '{}' - Volume: {}%, Muted: {}",
+                     client_id, volume, muted);
+            let changed = state.handle_volume_changed(&client_id, volume, muted);
+            if changed {
+                println!("  Room state updated, triggering screen refresh");
+            }
+            changed // T052: Return true if refresh needed
+        }
+        // T050: Handle stream changes
+        SnapcastEvent::StreamChanged { client_id, stream_id } => {
+            println!("Snapcast event: Stream changed for client '{}' to '{}'",
+                     client_id, stream_id);
+            let changed = state.handle_stream_changed(&client_id, stream_id);
+            if changed {
+                println!("  Room state updated, triggering screen refresh");
+            }
+            changed // T052: Return true if refresh needed
+        }
+        // T051: Handle stream updates
+        SnapcastEvent::StreamUpdate { stream_id, stream } => {
+            println!("Snapcast event: Stream '{}' updated - Name: '{}', Status: {:?}",
+                     stream_id, stream.name, stream.status);
+            let changed = state.handle_stream_update(&stream_id, stream);
+            if changed {
+                println!("  Stream state updated, triggering screen refresh");
+            }
+            changed // T052: Return true if refresh needed
         }
         _ => {
-            // Other Snapcast events will be handled in future phases
+            // Other Snapcast events (ClientConnected, ClientDisconnected)
+            false
         }
     }
 }

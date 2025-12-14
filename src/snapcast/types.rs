@@ -89,6 +89,12 @@ pub enum SnapcastEvent {
         stream_id: String,
     },
 
+    /// Stream metadata or status updated (T051)
+    StreamUpdate {
+        stream_id: String,
+        stream: AudioStream,
+    },
+
     /// Lost connection to Snapcast server
     ServerDisconnected,
 
