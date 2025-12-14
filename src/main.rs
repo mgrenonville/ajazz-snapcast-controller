@@ -46,12 +46,14 @@ async fn main() {
     // T033: Create tokio task for hardware event listening and display updates
     let hardware_manager = DeviceManager::new(hardware_event_tx);
     let hardware_task = tokio::spawn(async move {
-        let _ = hardware::device::device_monitor_loop(
+        if let Err(e) = hardware::device::device_monitor_loop(
             hardware_manager,
-            Duration::from_millis(1000),
+            Duration::from_millis(10),
             hardware_command_rx,
         )
-        .await;
+        .await {
+            eprintln!("Hardware monitor loop failed: {}", e);
+        }
     });
 
     // T034: Create Snapcast client and run in background

@@ -23,7 +23,7 @@ const TEXT_COLOR: Rgba<u8> = Rgba([255, 255, 255, 255]);
 const BG_COLOR: Rgba<u8> = Rgba([0, 0, 0, 255]);
 
 /// T053: Delay between individual screen updates to prevent USB bandwidth saturation (milliseconds)
-const SCREEN_UPDATE_DELAY_MS: u64 = 50;
+const SCREEN_UPDATE_DELAY_MS: u64 = 5;
 
 /// Display manager for rendering to hardware screens
 pub struct DisplayManager {
