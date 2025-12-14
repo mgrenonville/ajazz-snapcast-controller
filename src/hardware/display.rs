@@ -6,7 +6,7 @@ use ajazz_sdk::AsyncAjazz;
 use imageproc::drawing::{draw_text_mut, text_size};
 use imageproc::image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tokio::time::sleep;
 
 /// Screen dimensions for button displays (typical for Ajazz devices)

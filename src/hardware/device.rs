@@ -1,6 +1,6 @@
 // Hardware device - USB HID device detection and management
 
-use crate::hardware::{HardwareError, events::HardwareEvent};
+use crate::hardware::{HardwareError, events::{HardwareEvent, HardwareCommand}, display::DisplayManager};
 use ajazz_sdk::{AsyncAjazz, list_devices, new_hidapi};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
@@ -178,25 +178,47 @@ impl DeviceConnectionHandler {
         }
     }
 
-    /// Handle connection/disconnection events and reconnection
-    pub async fn handle_connection_lifecycle(&mut self) -> Result<(), HardwareError> {
+    /// Handle connection/disconnection events, reconnection, and display commands
+    pub async fn handle_connection_lifecycle(
+        &mut self,
+        command_rx: &mut mpsc::UnboundedReceiver<HardwareCommand>,
+        display_manager: &DisplayManager,
+    ) -> Result<(), HardwareError> {
         // Initial connection
         self.ensure_connected().await;
 
+        let mut health_check_interval = tokio::time::interval(self.base_poll_interval);
+
         loop {
-            // Ensure we're connected before checking device health
-            if !self.manager.is_connected() {
-                self.ensure_connected().await;
-            }
+            tokio::select! {
+                // Health check timer
+                _ = health_check_interval.tick() => {
+                    // Ensure we're connected before checking device health
+                    if !self.manager.is_connected() {
+                        self.ensure_connected().await;
+                        continue;
+                    }
 
-            // Wait before next health check
-            tokio::time::sleep(self.base_poll_interval).await;
+                    // Check if device is still alive
+                    if !self.check_device_alive().await {
+                        eprintln!("Hardware device health check failed");
+                        self.manager.handle_disconnection();
+                        // Will reconnect on next iteration
+                    }
+                }
 
-            // Check if device is still alive
-            if self.manager.is_connected() && !self.check_device_alive().await {
-                eprintln!("Hardware device health check failed");
-                self.manager.handle_disconnection();
-                // Will reconnect on next iteration
+                // Handle display update commands
+                Some(command) = command_rx.recv() => {
+                    if let Some(device) = self.manager.device() {
+                        match command {
+                            HardwareCommand::UpdateStatusPage(layout) => {
+                                if let Err(e) = display_manager.render_status_page(device, &layout).await {
+                                    eprintln!("Failed to update status page: {}", e);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -212,12 +234,14 @@ impl DeviceConnectionHandler {
     }
 }
 
-/// Continuously monitor for device connection/disconnection
-/// This is a convenience function that creates a DeviceConnectionHandler and runs it
+/// Continuously monitor for device connection/disconnection and handle display updates
 pub async fn device_monitor_loop(
     manager: DeviceManager,
     poll_interval: Duration,
+    mut command_rx: mpsc::UnboundedReceiver<HardwareCommand>,
 ) -> Result<(), HardwareError> {
     let mut handler = DeviceConnectionHandler::new(manager, poll_interval);
-    handler.handle_connection_lifecycle().await
+    let display_manager = DisplayManager::new()?;
+
+    handler.handle_connection_lifecycle(&mut command_rx, &display_manager).await
 }

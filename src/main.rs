@@ -9,7 +9,7 @@ use tokio::sync::mpsc::unbounded_channel;
 
 use crate::config::settings::ConnectionSettings;
 use crate::controller::state::ApplicationState;
-use crate::hardware::{device::DeviceManager, events::HardwareEvent};
+use crate::hardware::{device::DeviceManager, events::{HardwareEvent, HardwareCommand}, display::StatusPageLayout};
 use crate::snapcast::{client::SnapcastClient, types::SnapcastEvent};
 
 mod config;
@@ -36,18 +36,20 @@ async fn main() {
     // Create event channels
     let (hardware_event_tx, mut hardware_event_rx) = unbounded_channel::<HardwareEvent>();
     let (snapcast_event_tx, mut snapcast_event_rx) = unbounded_channel::<SnapcastEvent>();
+    let (hardware_command_tx, hardware_command_rx) = unbounded_channel::<HardwareCommand>();
 
     // Parse server address
     let server_addr = format!("{}:{}", config.server.address, config.server.port)
         .parse::<SocketAddr>()
         .expect("Invalid server address");
 
-    // T033: Create tokio task for hardware event listening
+    // T033: Create tokio task for hardware event listening and display updates
     let hardware_manager = DeviceManager::new(hardware_event_tx);
     let hardware_task = tokio::spawn(async move {
         let _ = hardware::device::device_monitor_loop(
             hardware_manager,
             Duration::from_millis(1000),
+            hardware_command_rx,
         )
         .await;
     });
@@ -75,7 +77,15 @@ async fn main() {
         tokio::select! {
             // Process hardware events
             Some(hw_event) = hardware_event_rx.recv() => {
-                handle_hardware_event(&mut app_state, hw_event).await;
+                let needs_refresh = handle_hardware_event(&mut app_state, hw_event, &hardware_command_tx).await;
+
+                // Trigger screen refresh if hardware just connected and we have state
+                if needs_refresh && app_state.needs_screen_refresh() {
+                    if let Some(layout) = build_status_layout(&app_state) {
+                        let _ = hardware_command_tx.send(HardwareCommand::UpdateStatusPage(layout));
+                        app_state.mark_screen_update_completed();
+                    }
+                }
             }
 
             // Process Snapcast events
@@ -84,21 +94,28 @@ async fn main() {
 
                 // T052: Trigger screen refresh when RoomState changes
                 if needs_refresh && app_state.needs_screen_refresh() {
-                    // TODO: Implement actual screen refresh
-                    // This will require access to the hardware device, which is currently
-                    // managed in a separate task. We'll implement this in future tasks when
-                    // we add the display manager integration with the hardware task.
-
                     // T054: Track time since state change for latency validation
                     if let Some(elapsed_ms) = app_state.time_since_state_change() {
-                        println!("  [TODO] Screen refresh needed ({}ms since state change) - will be implemented with hardware display integration", elapsed_ms);
+                        println!("  Triggering screen refresh ({}ms since state change)", elapsed_ms);
                     } else {
-                        println!("  [TODO] Screen refresh needed - will be implemented with hardware display integration");
+                        println!("  Triggering screen refresh");
                     }
 
-                    // When screen refresh is actually implemented, we'll call:
-                    // app_state.mark_screen_update_completed();
-                    // app_state.validate_screen_update_latency();
+                    // Send display update command to hardware task
+                    if let Some(layout) = build_status_layout(&app_state) {
+                        let _ = hardware_command_tx.send(HardwareCommand::UpdateStatusPage(layout));
+
+                        // Mark screen update as completed
+                        app_state.mark_screen_update_completed();
+
+                        // Validate latency
+                        let (is_valid, elapsed) = app_state.validate_screen_update_latency();
+                        if let Some(ms) = elapsed {
+                            if is_valid {
+                                println!("  Screen update latency: {}ms (within 2s limit)", ms);
+                            }
+                        }
+                    }
                 }
             }
 
@@ -122,24 +139,22 @@ async fn main() {
 }
 
 /// Handle hardware events (T036)
-async fn handle_hardware_event(state: &mut ApplicationState, event: HardwareEvent) {
+async fn handle_hardware_event(
+    state: &mut ApplicationState,
+    event: HardwareEvent,
+    _hardware_command_tx: &tokio::sync::mpsc::UnboundedSender<HardwareCommand>,
+) -> bool {
     match event {
         HardwareEvent::DeviceConnected => {
             println!("Hardware event: Device connected");
             state.set_hardware_connected(true);
 
             // If server is already connected and we have room state, display it
-            if state.server_connected {
-                if let Some(room) = &state.room {
-                    println!(
-                        "  Displaying room '{}' status on hardware",
-                        room.name
-                    );
-                } else {
-                    println!("  Waiting for room state from server...");
-                }
+            if state.server_connected && state.room.is_some() {
+                println!("  Hardware connected, refreshing display");
+                return true; // Trigger screen refresh
             } else {
-                println!("  Waiting for server connection...");
+                println!("  Waiting for server connection and room state...");
             }
         }
         HardwareEvent::DeviceDisconnected => {
@@ -150,6 +165,7 @@ async fn handle_hardware_event(state: &mut ApplicationState, event: HardwareEven
             // Other hardware events (knobs, buttons) will be handled in future phases
         }
     }
+    false
 }
 
 /// Handle Snapcast events (T037, T049-T052)
@@ -228,6 +244,27 @@ async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEven
             false
         }
     }
+}
+
+/// Build StatusPageLayout from current application state
+fn build_status_layout(state: &ApplicationState) -> Option<StatusPageLayout> {
+    let room = state.room.as_ref()?;
+
+    // Get stream name if we have a stream_id
+    let stream_name = room.stream_id.as_ref()
+        .and_then(|id| state.get_stream_name(id))
+        .or(Some("No Stream".to_string()))?;
+
+    let layout = StatusPageLayout::from_room_state(
+        &room.name,
+        &format!("{}:{}", state.config.server.address, state.config.server.port),
+        room.volume,
+        room.muted,
+        room.connected,
+        Some(&stream_name),
+    );
+
+    Some(layout)
 }
 
 /// Get the configuration file path
