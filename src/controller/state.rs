@@ -202,4 +202,43 @@ impl ApplicationState {
     pub fn time_since_state_change(&self) -> Option<u128> {
         self.last_state_change.map(|t| t.elapsed().as_millis())
     }
+
+    /// T065: Handle knob rotation events
+    /// Returns Some(new_volume) if volume should be changed, None otherwise
+    pub fn handle_knob_rotated(&self, knob_id: u8, delta: i8) -> Option<(String, u8)> {
+        // Only knob 0 controls volume
+        if knob_id != 0 {
+            return None;
+        }
+
+        // Get current room state
+        let room = self.room.as_ref()?;
+
+        // T058 & T059: Calculate new volume (delta * 5%), clamped to 0-100
+        let volume_change = delta as i32 * 5;
+        let new_volume = (room.volume as i32 + volume_change).clamp(0, 100) as u8;
+
+        // Only return if volume actually changed
+        if new_volume != room.volume {
+            Some((room.client_id.clone(), new_volume))
+        } else {
+            None
+        }
+    }
+
+    /// T067: Handle button press events for mute toggle
+    /// Returns Some(new_muted_state) if button 0 was pressed, None otherwise
+    pub fn handle_button_pressed(&self, button_id: u8) -> Option<(String, bool)> {
+        // Only button 0 toggles mute
+        if button_id != 0 {
+            return None;
+        }
+
+        // Get current room state
+        let room = self.room.as_ref()?;
+
+        // Toggle muted state
+        let new_muted = !room.muted;
+        Some((room.client_id.clone(), new_muted))
+    }
 }

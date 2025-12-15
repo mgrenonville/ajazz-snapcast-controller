@@ -134,10 +134,10 @@
 - [x] T060 [US3] Map button 0 press to mute/unmute toggle in src/controller/mapping.rs
 - [x] T061 [US3] Map button 1 press to switch to stream selection page in src/controller/mapping.rs
 - [x] T062 [US3] Implement Client.SetVolume JSON-RPC call in src/snapcast/commands.rs
-- [ ] T063 [US3] Implement Group.SetStream JSON-RPC call in src/snapcast/commands.rs (requires finding group ID first)
-- [ ] T064 [US3] Find group containing room's client from Server.GetStatus in src/snapcast/client.rs
-- [ ] T065 [US3] Handle HardwareEvent::KnobRotated in src/controller/state.rs
-- [ ] T066 [US3] Send ControllerCommand::SetVolume to Snapcast when knob rotated in src/controller/state.rs
+- [x] T063 [US3] Implement Group.SetStream JSON-RPC call in src/snapcast/commands.rs (requires finding group ID first)
+- [x] T064 [US3] Find group containing room's client from Server.GetStatus in src/snapcast/client.rs
+- [x] T065 [US3] Handle HardwareEvent::KnobRotated in src/controller/state.rs
+- [x] T066 [US3] Send ControllerCommand::SetVolume to Snapcast when knob rotated in src/controller/state.rs
 - [ ] T067 [US3] Handle HardwareEvent::ButtonPressed for button 0 (mute toggle) in src/controller/state.rs
 - [ ] T068 [US3] Send ControllerCommand::SetMute to Snapcast when button 0 pressed in src/controller/state.rs
 - [ ] T069 [US3] Implement stream selection page screen layout in src/hardware/display.rs (buttons 0-5 show streams)

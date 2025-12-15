@@ -165,43 +165,36 @@ async fn handle_hardware_event(
             println!("Hardware event: Device disconnected");
             state.set_hardware_connected(false);
         }
-        // T055 & T058-T059: Knob 0 rotation controls volume
-        HardwareEvent::KnobRotated { knob_id: 0, delta } => {
-            if let Some(room) = &state.room {
-                // T058: Adjust volume by delta * 5%
-                let volume_change = delta as i32 * 5;
-                let new_volume = (room.volume as i32 + volume_change)
-                    .clamp(0, 100) as u8; // T059: Clamp to 0-100
+        // T065-T066: Knob rotation controls volume (handled in ApplicationState)
+        HardwareEvent::KnobRotated { knob_id, delta } => {
+            if let Some((client_id, new_volume)) = state.handle_knob_rotated(knob_id, delta) {
+                println!("Hardware event: Knob {} rotated (delta: {}) - Volume: {}%",
+                         knob_id, delta, new_volume);
 
-                println!("Hardware event: Knob 0 rotated (delta: {}) - Volume: {}% -> {}%",
-                         delta, room.volume, new_volume);
-
-                // T062: Send SetVolume command to Snapcast
+                // T066: Send SetVolume command to Snapcast
                 let _ = snapcast_command_tx.send(SnapcastCommand::SetVolume {
-                    client_id: room.client_id.clone(),
+                    client_id,
                     volume: new_volume,
                 });
             }
         }
-        // T056 & T060: Button 0 press toggles mute
-        HardwareEvent::ButtonPressed { button_id: 0 } => {
-            if let Some(room) = &state.room {
-                let new_muted = !room.muted;
-                println!("Hardware event: Button 0 pressed - Mute: {} -> {}",
-                         room.muted, new_muted);
+        // T067-T068: Button press handling (handled in ApplicationState)
+        HardwareEvent::ButtonPressed { button_id } => {
+            if let Some((client_id, new_muted)) = state.handle_button_pressed(button_id) {
+                println!("Hardware event: Button {} pressed - Mute: {}",
+                         button_id, new_muted);
 
-                // T062: Send SetMuted command to Snapcast
+                // T068: Send SetMuted command to Snapcast
                 let _ = snapcast_command_tx.send(SnapcastCommand::SetMuted {
-                    client_id: room.client_id.clone(),
+                    client_id,
                     muted: new_muted,
                 });
+            } else if button_id == 1 {
+                // T061: Button 1 switches to stream selection page
+                println!("Hardware event: Button 1 pressed - Switching to stream selection");
+                state.current_page = crate::controller::state::PageView::StreamSelection;
+                // TODO: Implement stream selection page rendering in future phase
             }
-        }
-        // T056 & T061: Button 1 press switches to stream selection page
-        HardwareEvent::ButtonPressed { button_id: 1 } => {
-            println!("Hardware event: Button 1 pressed - Switching to stream selection");
-            state.current_page = crate::controller::state::PageView::StreamSelection;
-            // TODO: Implement stream selection page rendering in future phase
         }
         _ => {
             // Other hardware events not yet implemented
