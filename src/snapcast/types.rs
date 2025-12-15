@@ -104,3 +104,16 @@ pub enum SnapcastEvent {
         streams: Vec<AudioStream>,
     },
 }
+
+/// Commands to send to Snapcast server
+#[derive(Debug, Clone)]
+pub enum SnapcastCommand {
+    /// Set volume for a client (0-100)
+    SetVolume { client_id: String, volume: u8 },
+
+    /// Set mute status for a client
+    SetMuted { client_id: String, muted: bool },
+
+    /// Change stream for a client
+    SetStream { client_id: String, stream_id: String },
+}

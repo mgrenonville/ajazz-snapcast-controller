@@ -108,6 +108,8 @@ pub struct DeviceConnectionHandler {
     base_poll_interval: Duration,
     max_poll_interval: Duration,
     current_poll_interval: Duration,
+    /// Event reader for polling hardware events
+    event_reader: Option<std::sync::Arc<ajazz_sdk::asynchronous::AsyncDeviceStateReader>>,
 }
 
 impl DeviceConnectionHandler {
@@ -118,6 +120,7 @@ impl DeviceConnectionHandler {
             base_poll_interval,
             max_poll_interval: Duration::from_secs(10),
             current_poll_interval: base_poll_interval,
+            event_reader: None,
         }
     }
 
@@ -127,6 +130,12 @@ impl DeviceConnectionHandler {
             Ok(_) => {
                 // Reset poll interval on successful connection
                 self.current_poll_interval = self.base_poll_interval;
+
+                // Create event reader for the connected device
+                if let Some(device) = self.manager.device() {
+                    self.event_reader = Some(device.get_reader());
+                }
+
                 Ok(())
             }
             Err(e) => {
@@ -188,6 +197,7 @@ impl DeviceConnectionHandler {
         self.ensure_connected().await;
 
         let mut health_check_interval = tokio::time::interval(self.base_poll_interval);
+        let mut event_poll_interval = tokio::time::interval(Duration::from_millis(10));
 
         loop {
             tokio::select! {
@@ -207,6 +217,13 @@ impl DeviceConnectionHandler {
                     }
                 }
 
+                // Poll for hardware events (T055-T057)
+                _ = event_poll_interval.tick() => {
+                    if let Err(e) = self.poll_hardware_events().await {
+                        eprintln!("Error polling hardware events: {}", e);
+                    }
+                }
+
                 // Handle display update commands
                 Some(command) = command_rx.recv() => {
                     if let Some(device) = self.manager.device() {
@@ -220,6 +237,60 @@ impl DeviceConnectionHandler {
                     }
                 }
             }
+        }
+    }
+
+    /// T055-T057: Poll for hardware events (knobs, buttons, encoders)
+    async fn poll_hardware_events(&mut self) -> Result<(), HardwareError> {
+        use ajazz_sdk::Event;
+
+        // Check if we have an event reader
+        if let Some(reader) = &self.event_reader {
+            // Read events with a high poll rate for responsiveness
+            match reader.read(100.0).await {
+                Ok(events) => {
+                    for event in events {
+                        match event {
+                            // T055: Encoder/Knob twist events
+                            Event::EncoderTwist(encoder_id, delta) => {
+                                let _ = self.manager.event_tx.send(HardwareEvent::KnobRotated {
+                                    knob_id: encoder_id,
+                                    delta,
+                                });
+                            }
+
+                            // T056: Button press/release events
+                            Event::ButtonDown(button_id) => {
+                                let _ = self.manager.event_tx.send(HardwareEvent::ButtonPressed {
+                                    button_id,
+                                });
+                            }
+                            Event::ButtonUp(button_id) => {
+                                let _ = self.manager.event_tx.send(HardwareEvent::ButtonReleased {
+                                    button_id,
+                                });
+                            }
+
+                            // T057: Encoder press/release (treat as page buttons)
+                            Event::EncoderDown(encoder_id) => {
+                                let _ = self.manager.event_tx.send(HardwareEvent::PageButtonPressed {
+                                    page_id: encoder_id,
+                                });
+                            }
+
+                            // Ignore encoder up events for now
+                            Event::EncoderUp(_) => {}
+                        }
+                    }
+                    Ok(())
+                }
+                Err(e) => {
+                    Err(HardwareError::ReadError(e.to_string()))
+                }
+            }
+        } else {
+            // No reader available yet (device not connected)
+            Ok(())
         }
     }
 

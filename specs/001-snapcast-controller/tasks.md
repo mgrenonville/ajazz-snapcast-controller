@@ -126,14 +126,14 @@
 
 ### Implementation for User Story 3
 
-- [ ] T055 [P] [US3] Implement knob rotation event handling in src/hardware/events.rs
-- [ ] T056 [P] [US3] Implement button press/release event handling in src/hardware/events.rs
-- [ ] T057 [P] [US3] Implement page button handling in src/hardware/events.rs
-- [ ] T058 [US3] Map knob 0 rotation to volume adjustment in src/controller/mapping.rs (delta * 5% per rotation)
-- [ ] T059 [US3] Clamp volume to 0-100 range in src/controller/mapping.rs
-- [ ] T060 [US3] Map button 0 press to mute/unmute toggle in src/controller/mapping.rs
-- [ ] T061 [US3] Map button 1 press to switch to stream selection page in src/controller/mapping.rs
-- [ ] T062 [US3] Implement Client.SetVolume JSON-RPC call in src/snapcast/commands.rs
+- [x] T055 [P] [US3] Implement knob rotation event handling in src/hardware/events.rs
+- [x] T056 [P] [US3] Implement button press/release event handling in src/hardware/events.rs
+- [x] T057 [P] [US3] Implement page button handling in src/hardware/events.rs
+- [x] T058 [US3] Map knob 0 rotation to volume adjustment in src/controller/mapping.rs (delta * 5% per rotation)
+- [x] T059 [US3] Clamp volume to 0-100 range in src/controller/mapping.rs
+- [x] T060 [US3] Map button 0 press to mute/unmute toggle in src/controller/mapping.rs
+- [x] T061 [US3] Map button 1 press to switch to stream selection page in src/controller/mapping.rs
+- [x] T062 [US3] Implement Client.SetVolume JSON-RPC call in src/snapcast/commands.rs
 - [ ] T063 [US3] Implement Group.SetStream JSON-RPC call in src/snapcast/commands.rs (requires finding group ID first)
 - [ ] T064 [US3] Find group containing room's client from Server.GetStatus in src/snapcast/client.rs
 - [ ] T065 [US3] Handle HardwareEvent::KnobRotated in src/controller/state.rs

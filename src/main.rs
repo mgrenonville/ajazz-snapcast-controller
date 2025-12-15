@@ -10,7 +10,7 @@ use tokio::sync::mpsc::unbounded_channel;
 use crate::config::settings::ConnectionSettings;
 use crate::controller::state::ApplicationState;
 use crate::hardware::{device::DeviceManager, events::{HardwareEvent, HardwareCommand}, display::StatusPageLayout};
-use crate::snapcast::{client::SnapcastClient, types::SnapcastEvent};
+use crate::snapcast::{client::SnapcastClient, types::{SnapcastEvent, SnapcastCommand}};
 
 mod config;
 mod controller;
@@ -37,6 +37,7 @@ async fn main() {
     let (hardware_event_tx, mut hardware_event_rx) = unbounded_channel::<HardwareEvent>();
     let (snapcast_event_tx, mut snapcast_event_rx) = unbounded_channel::<SnapcastEvent>();
     let (hardware_command_tx, hardware_command_rx) = unbounded_channel::<HardwareCommand>();
+    let (snapcast_command_tx, snapcast_command_rx) = unbounded_channel::<SnapcastCommand>();
 
     // Parse server address
     let server_addr = format!("{}:{}", config.server.address, config.server.port)
@@ -66,7 +67,7 @@ async fn main() {
         snapcast_event_tx,
     );
     let snapcast_task = async move {
-        let _ = snapcast::client::message_loop(snapcast_client, Duration::from_secs(2)).await;
+        let _ = snapcast::client::message_loop(snapcast_client, Duration::from_secs(2), snapcast_command_rx).await;
     };
 
     // T032: Implement main event loop
@@ -79,7 +80,7 @@ async fn main() {
         tokio::select! {
             // Process hardware events
             Some(hw_event) = hardware_event_rx.recv() => {
-                let needs_refresh = handle_hardware_event(&mut app_state, hw_event, &hardware_command_tx).await;
+                let needs_refresh = handle_hardware_event(&mut app_state, hw_event, &hardware_command_tx, &snapcast_command_tx).await;
 
                 // Trigger screen refresh if hardware just connected and we have state
                 if needs_refresh && app_state.needs_screen_refresh() {
@@ -140,11 +141,12 @@ async fn main() {
     println!("Application terminated");
 }
 
-/// Handle hardware events (T036)
+/// Handle hardware events (T036, T055-T061)
 async fn handle_hardware_event(
     state: &mut ApplicationState,
     event: HardwareEvent,
     _hardware_command_tx: &tokio::sync::mpsc::UnboundedSender<HardwareCommand>,
+    snapcast_command_tx: &tokio::sync::mpsc::UnboundedSender<SnapcastCommand>,
 ) -> bool {
     match event {
         HardwareEvent::DeviceConnected => {
@@ -163,8 +165,46 @@ async fn handle_hardware_event(
             println!("Hardware event: Device disconnected");
             state.set_hardware_connected(false);
         }
+        // T055 & T058-T059: Knob 0 rotation controls volume
+        HardwareEvent::KnobRotated { knob_id: 0, delta } => {
+            if let Some(room) = &state.room {
+                // T058: Adjust volume by delta * 5%
+                let volume_change = delta as i32 * 5;
+                let new_volume = (room.volume as i32 + volume_change)
+                    .clamp(0, 100) as u8; // T059: Clamp to 0-100
+
+                println!("Hardware event: Knob 0 rotated (delta: {}) - Volume: {}% -> {}%",
+                         delta, room.volume, new_volume);
+
+                // T062: Send SetVolume command to Snapcast
+                let _ = snapcast_command_tx.send(SnapcastCommand::SetVolume {
+                    client_id: room.client_id.clone(),
+                    volume: new_volume,
+                });
+            }
+        }
+        // T056 & T060: Button 0 press toggles mute
+        HardwareEvent::ButtonPressed { button_id: 0 } => {
+            if let Some(room) = &state.room {
+                let new_muted = !room.muted;
+                println!("Hardware event: Button 0 pressed - Mute: {} -> {}",
+                         room.muted, new_muted);
+
+                // T062: Send SetMuted command to Snapcast
+                let _ = snapcast_command_tx.send(SnapcastCommand::SetMuted {
+                    client_id: room.client_id.clone(),
+                    muted: new_muted,
+                });
+            }
+        }
+        // T056 & T061: Button 1 press switches to stream selection page
+        HardwareEvent::ButtonPressed { button_id: 1 } => {
+            println!("Hardware event: Button 1 pressed - Switching to stream selection");
+            state.current_page = crate::controller::state::PageView::StreamSelection;
+            // TODO: Implement stream selection page rendering in future phase
+        }
         _ => {
-            // Other hardware events (knobs, buttons) will be handled in future phases
+            // Other hardware events not yet implemented
         }
     }
     false

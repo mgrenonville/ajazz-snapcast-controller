@@ -1,6 +1,6 @@
 // Snapcast client - TCP connection and communication with Snapcast server
 
-use crate::snapcast::{SnapcastError, types::SnapcastEvent};
+use crate::snapcast::{SnapcastError, types::{SnapcastEvent, SnapcastCommand}};
 use snapcast_control::{ClientError, SnapcastConnection};
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
@@ -453,8 +453,11 @@ impl ConnectionHandler {
         }
     }
 
-    /// Handle connection/disconnection events and reconnection
-    pub async fn handle_connection_lifecycle(&mut self) -> Result<(), SnapcastError> {
+    /// Handle connection/disconnection events, reconnection, and commands
+    pub async fn handle_connection_lifecycle(
+        &mut self,
+        command_rx: &mut mpsc::UnboundedReceiver<SnapcastCommand>,
+    ) -> Result<(), SnapcastError> {
         // Initial connection
         self.ensure_connected().await;
 
@@ -464,21 +467,87 @@ impl ConnectionHandler {
                 self.ensure_connected().await;
             }
 
-            // Receive and process messages
-            match self.client.receive_message().await {
-                Ok(Some(())) => {
-                    // Message processed successfully
-                    continue;
+            tokio::select! {
+                // Receive and process server messages
+                result = self.client.receive_message() => {
+                    match result {
+                        Ok(Some(())) => {
+                            // Message processed successfully
+                            continue;
+                        }
+                        Ok(None) => {
+                            // Connection closed, will reconnect on next iteration
+                            eprintln!("Server connection closed");
+                            continue;
+                        }
+                        Err(e) => {
+                            eprintln!("Error receiving message: {}", e);
+                            self.client.handle_disconnection();
+                            // Will reconnect on next iteration
+                        }
+                    }
                 }
-                Ok(None) => {
-                    // Connection closed, will reconnect on next iteration
-                    eprintln!("Server connection closed");
-                    continue;
+
+                // Handle commands from main event loop
+                Some(command) = command_rx.recv() => {
+                    if let Err(e) = self.handle_command(command).await {
+                        eprintln!("Error executing command: {}", e);
+                    }
                 }
-                Err(e) => {
-                    eprintln!("Error receiving message: {}", e);
-                    self.client.handle_disconnection();
-                    // Will reconnect on next iteration
+            }
+        }
+    }
+
+    /// Execute a command on the Snapcast server
+    async fn handle_command(&mut self, command: SnapcastCommand) -> Result<(), SnapcastError> {
+        match command {
+            SnapcastCommand::SetVolume { client_id, volume } => {
+                // Get current muted status from state
+                let muted = if let Some(conn) = &self.client.connection {
+                    conn.state
+                        .clients
+                        .get(&client_id)
+                        .map(|c| c.config.volume.muted)
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+
+                self.client.set_client_volume(client_id, volume, muted).await
+            }
+            SnapcastCommand::SetMuted { client_id, muted } => {
+                // Get current volume from state
+                let volume = if let Some(conn) = &self.client.connection {
+                    conn.state
+                        .clients
+                        .get(&client_id)
+                        .map(|c| c.config.volume.percent.min(100) as u8)
+                        .unwrap_or(50)
+                } else {
+                    50
+                };
+
+                self.client.set_client_volume(client_id, volume, muted).await
+            }
+            SnapcastCommand::SetStream { client_id, stream_id } => {
+                // Find which group this client belongs to
+                let group_id = if let Some(conn) = &self.client.connection {
+                    let mut found_group_id = None;
+                    for entry in &conn.state.groups {
+                        if entry.value().clients.contains(&client_id) {
+                            found_group_id = Some(entry.key().clone());
+                            break;
+                        }
+                    }
+                    found_group_id
+                } else {
+                    None
+                };
+
+                if let Some(gid) = group_id {
+                    self.client.set_group_stream(gid, stream_id).await
+                } else {
+                    Err(SnapcastError::RpcError("Client not found in any group".to_string()))
                 }
             }
         }
@@ -495,12 +564,13 @@ impl ConnectionHandler {
     }
 }
 
-/// Message loop for receiving Snapcast server events
+/// Message loop for receiving Snapcast server events and handling commands
 /// This is a convenience function that creates a ConnectionHandler and runs it
 pub async fn message_loop(
     client: SnapcastClient,
     reconnect_interval: std::time::Duration,
+    mut command_rx: mpsc::UnboundedReceiver<SnapcastCommand>,
 ) -> Result<(), SnapcastError> {
     let mut handler = ConnectionHandler::new(client, reconnect_interval);
-    handler.handle_connection_lifecycle().await
+    handler.handle_connection_lifecycle(&mut command_rx).await
 }
