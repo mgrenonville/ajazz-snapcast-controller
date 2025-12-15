@@ -176,6 +176,9 @@ async fn handle_hardware_event(
                     client_id,
                     volume: new_volume,
                 });
+
+                // State changed, trigger screen refresh
+                return true;
             }
         }
         // T067-T068: Button press handling (handled in ApplicationState)
@@ -189,6 +192,9 @@ async fn handle_hardware_event(
                     client_id,
                     muted: new_muted,
                 });
+
+                // State changed, trigger screen refresh
+                return true;
             } else if button_id == 1 {
                 // T061: Button 1 switches to stream selection page
                 println!("Hardware event: Button 1 pressed - Switching to stream selection");
