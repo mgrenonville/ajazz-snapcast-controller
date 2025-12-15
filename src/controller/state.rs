@@ -204,15 +204,15 @@ impl ApplicationState {
     }
 
     /// T065: Handle knob rotation events
-    /// Returns Some(new_volume) if volume should be changed, None otherwise
-    pub fn handle_knob_rotated(&self, knob_id: u8, delta: i8) -> Option<(String, u8)> {
+    /// Updates local state optimistically and returns Some(new_volume) if volume should be changed
+    pub fn handle_knob_rotated(&mut self, knob_id: u8, delta: i8) -> Option<(String, u8)> {
         // Only knob 0 controls volume
         if knob_id != 0 {
             return None;
         }
 
         // Get current room state
-        let room = self.room.as_ref()?;
+        let room = self.room.as_mut()?;
 
         // T058 & T059: Calculate new volume (delta * 5%), clamped to 0-100
         let volume_change = delta as i32 * 5;
@@ -220,25 +220,35 @@ impl ApplicationState {
 
         // Only return if volume actually changed
         if new_volume != room.volume {
-            Some((room.client_id.clone(), new_volume))
+            let client_id = room.client_id.clone();
+
+            // Update local state immediately (optimistic update)
+            room.volume = new_volume;
+
+            Some((client_id, new_volume))
         } else {
             None
         }
     }
 
     /// T067: Handle button press events for mute toggle
-    /// Returns Some(new_muted_state) if button 0 was pressed, None otherwise
-    pub fn handle_button_pressed(&self, button_id: u8) -> Option<(String, bool)> {
+    /// Updates local state optimistically and returns Some(new_muted_state) if button 0 was pressed
+    pub fn handle_button_pressed(&mut self, button_id: u8) -> Option<(String, bool)> {
         // Only button 0 toggles mute
         if button_id != 0 {
             return None;
         }
 
         // Get current room state
-        let room = self.room.as_ref()?;
+        let room = self.room.as_mut()?;
 
         // Toggle muted state
         let new_muted = !room.muted;
-        Some((room.client_id.clone(), new_muted))
+        let client_id = room.client_id.clone();
+
+        // Update local state immediately (optimistic update)
+        room.muted = new_muted;
+
+        Some((client_id, new_muted))
     }
 }
