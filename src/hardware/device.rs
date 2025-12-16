@@ -190,7 +190,7 @@ impl DeviceConnectionHandler {
     /// Handle connection/disconnection events, reconnection, and display commands
     pub async fn handle_connection_lifecycle(
         &mut self,
-        command_rx: &mut mpsc::Receiver<HardwareCommand>,
+        command_rx: &mut tokio::sync::watch::Receiver<Option<HardwareCommand>>,
         display_manager: &DisplayManager,
     ) -> Result<(), HardwareError> {
         // Initial connection
@@ -225,12 +225,18 @@ impl DeviceConnectionHandler {
                 }
 
                 // Handle display update commands
-                Some(command) = command_rx.recv() => {
-                    if let Some(device) = self.manager.device() {
-                        match command {
-                            HardwareCommand::UpdateStatusPage(layout) => {
-                                if let Err(e) = display_manager.render_status_page(device, &layout).await {
-                                    eprintln!("Failed to update status page: {}", e);
+                Ok(()) = command_rx.changed() => {
+                    // Get the latest command (may have been updated multiple times)
+                    // Clone to drop the borrow guard before awaiting
+                    let command = command_rx.borrow_and_update().clone();
+                    if let Some(command) = command {
+                        if let Some(device) = self.manager.device() {
+                            match command {
+                                HardwareCommand::UpdateStatusPage(layout) => {
+                                    eprintln!("rendering: {:?}", layout);
+                                    if let Err(e) = display_manager.render_status_page(device, &layout).await {
+                                        eprintln!("Failed to update status page: {}", e);
+                                    }
                                 }
                             }
                         }
@@ -309,7 +315,7 @@ impl DeviceConnectionHandler {
 pub async fn device_monitor_loop(
     manager: DeviceManager,
     poll_interval: Duration,
-    mut command_rx: mpsc::Receiver<HardwareCommand>,
+    mut command_rx: tokio::sync::watch::Receiver<Option<HardwareCommand>>,
 ) -> Result<(), HardwareError> {
     let mut handler = DeviceConnectionHandler::new(manager, poll_interval);
     let display_manager = DisplayManager::new()?;

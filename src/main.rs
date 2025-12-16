@@ -5,7 +5,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
 
-use tokio::sync::mpsc::{unbounded_channel, channel};
+use tokio::sync::{mpsc::unbounded_channel, watch};
 
 use crate::config::settings::ConnectionSettings;
 use crate::controller::state::ApplicationState;
@@ -36,8 +36,8 @@ async fn main() {
     // Create event channels
     let (hardware_event_tx, mut hardware_event_rx) = unbounded_channel::<HardwareEvent>();
     let (snapcast_event_tx, mut snapcast_event_rx) = unbounded_channel::<SnapcastEvent>();
-    // Bounded channel with capacity 1 for screen updates - drops old updates if screen is busy
-    let (hardware_command_tx, hardware_command_rx) = channel::<HardwareCommand>(1);
+    // Watch channel for screen updates - always holds latest state, drops old updates
+    let (hardware_command_tx, hardware_command_rx) = watch::channel::<Option<HardwareCommand>>(None);
     let (snapcast_command_tx, snapcast_command_rx) = unbounded_channel::<SnapcastCommand>();
 
     // Parse server address
@@ -86,8 +86,8 @@ async fn main() {
                 // Trigger screen refresh if hardware just connected and we have state
                 if needs_refresh && app_state.needs_screen_refresh() {
                     if let Some(layout) = build_status_layout(&app_state) {
-                        // try_send drops the message if channel is full (screen update already pending)
-                        let _ = hardware_command_tx.try_send(HardwareCommand::UpdateStatusPage(layout));
+                        // Send always succeeds, overwrites any pending update with latest state
+                        let _ = hardware_command_tx.send(Some(HardwareCommand::UpdateStatusPage(layout)));
                         app_state.mark_screen_update_completed();
                     }
                 }
@@ -108,8 +108,8 @@ async fn main() {
 
                     // Send display update command to hardware task
                     if let Some(layout) = build_status_layout(&app_state) {
-                        // try_send drops the message if channel is full (screen update already pending)
-                        let _ = hardware_command_tx.try_send(HardwareCommand::UpdateStatusPage(layout));
+                        // Send always succeeds, overwrites any pending update with latest state
+                        let _ = hardware_command_tx.send(Some(HardwareCommand::UpdateStatusPage(layout)));
 
                         // Mark screen update as completed
                         app_state.mark_screen_update_completed();
@@ -148,7 +148,7 @@ async fn main() {
 async fn handle_hardware_event(
     state: &mut ApplicationState,
     event: HardwareEvent,
-    _hardware_command_tx: &tokio::sync::mpsc::Sender<HardwareCommand>,
+    _hardware_command_tx: &watch::Sender<Option<HardwareCommand>>,
     snapcast_command_tx: &tokio::sync::mpsc::UnboundedSender<SnapcastCommand>,
 ) -> bool {
     match event {
