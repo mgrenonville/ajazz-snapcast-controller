@@ -190,7 +190,7 @@ impl DeviceConnectionHandler {
     /// Handle connection/disconnection events, reconnection, and display commands
     pub async fn handle_connection_lifecycle(
         &mut self,
-        command_rx: &mut mpsc::UnboundedReceiver<HardwareCommand>,
+        command_rx: &mut mpsc::Receiver<HardwareCommand>,
         display_manager: &DisplayManager,
     ) -> Result<(), HardwareError> {
         // Initial connection
@@ -309,7 +309,7 @@ impl DeviceConnectionHandler {
 pub async fn device_monitor_loop(
     manager: DeviceManager,
     poll_interval: Duration,
-    mut command_rx: mpsc::UnboundedReceiver<HardwareCommand>,
+    mut command_rx: mpsc::Receiver<HardwareCommand>,
 ) -> Result<(), HardwareError> {
     let mut handler = DeviceConnectionHandler::new(manager, poll_interval);
     let display_manager = DisplayManager::new()?;

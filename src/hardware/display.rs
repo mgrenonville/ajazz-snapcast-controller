@@ -390,6 +390,7 @@ impl DisplayManager {
         device: &Arc<AsyncAjazz>,
         layout: &StatusPageLayout,
     ) -> Result<(), HardwareError> {
+        eprintln!("rendering: {:?}", layout);
         // Button 0: Mute status (T044)
         let muted = layout.mute_status == "MUTED";
         self.render_mute_screen(device, 0, muted).await?;
