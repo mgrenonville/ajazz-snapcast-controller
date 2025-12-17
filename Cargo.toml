@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 # Async runtime
 tokio = { version = "1", features = ["full"] }
-
+tokio-stream = {version = "0.1.17", features = ["sync"] } 
 # Serialization
 serde = { version = "1", features = ["derive"] }
 toml = "0.8"

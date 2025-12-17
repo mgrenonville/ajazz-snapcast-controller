@@ -1,6 +1,9 @@
 // Snapcast client - TCP connection and communication with Snapcast server
 
-use crate::snapcast::{SnapcastError, types::{SnapcastEvent, SnapcastCommand}};
+use crate::snapcast::{
+    SnapcastError,
+    types::{SnapcastCommand, SnapcastEvent},
+};
 use snapcast_control::{ClientError, SnapcastConnection};
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
@@ -228,6 +231,7 @@ impl SnapcastClient {
             muted,
         };
 
+        eprintln!("Snapcast client: Set volume: {volume}");
         connection
             .client_set_volume(client_id, volume_params)
             .await
@@ -266,10 +270,12 @@ impl SnapcastClient {
 
         match connection.recv().await {
             Some(Ok(message)) => {
-                // Check if this is a notification we care about
-                if let ValidMessage::Notification { method, .. } = message {
-                    self.handle_notification(*method);
+                match message {
+                    // Check if this is a notification we care about
+                    ValidMessage::Notification { method, .. } => self.handle_notification(*method),
+                    ValidMessage::Result { result, .. } => self.handle_result(*result),
                 }
+
                 // The snapcast_control library handles state updates automatically
                 Ok(Some(()))
             }
@@ -282,6 +288,37 @@ impl SnapcastClient {
                 self.handle_disconnection();
                 Ok(None)
             }
+        }
+    }
+
+    fn handle_result(&self, result: snapcast_control::SnapcastResult) {
+        use snapcast_control::SnapcastResult;
+        match result {
+            SnapcastResult::ClientGetStatus(get_status_result) => todo!(),
+            SnapcastResult::ClientSetVolume(id, params) => {
+                let volume = params.volume.percent.min(100) as u8;
+                let muted = params.volume.muted;
+
+                let _ = self.event_tx.send(SnapcastEvent::ClientVolumeChanged {
+                    client_id: id,
+                    volume,
+                    muted,
+                });
+            }
+            SnapcastResult::ClientSetLatency(_, set_latency_result) => todo!(),
+            SnapcastResult::ClientSetName(_, set_name_result) => todo!(),
+            SnapcastResult::GroupGetStatus(get_status_result) => todo!(),
+            SnapcastResult::GroupSetMute(_, set_mute_result) => todo!(),
+            SnapcastResult::GroupSetStream(_, set_stream_result) => todo!(),
+            SnapcastResult::GroupSetClients(set_clients_result) => todo!(),
+            SnapcastResult::GroupSetName(_, set_name_result) => todo!(),
+            SnapcastResult::ServerGetRPCVersion(get_rpc_version_result) => todo!(),
+            SnapcastResult::ServerGetStatus(get_status_result) => todo!(),
+            SnapcastResult::ServerDeleteClient(delete_client_result) => todo!(),
+            SnapcastResult::StreamAddStream(add_stream_result) => todo!(),
+            SnapcastResult::StreamRemoveStream(remove_stream_result) => todo!(),
+            SnapcastResult::StreamControl(_) => todo!(),
+            SnapcastResult::StreamSetProperty(_) => todo!(),
         }
     }
 
@@ -366,9 +403,9 @@ impl SnapcastClient {
 
             // Client connection events
             Notification::ClientOnConnect { params } => {
-                let _ = self
-                    .event_tx
-                    .send(SnapcastEvent::ClientConnected { client_id: params.id });
+                let _ = self.event_tx.send(SnapcastEvent::ClientConnected {
+                    client_id: params.id,
+                });
             }
 
             Notification::ClientOnDisconnect { params } => {
@@ -513,7 +550,9 @@ impl ConnectionHandler {
                     false
                 };
 
-                self.client.set_client_volume(client_id, volume, muted).await
+                self.client
+                    .set_client_volume(client_id, volume, muted)
+                    .await
             }
             SnapcastCommand::SetMuted { client_id, muted } => {
                 // Get current volume from state
@@ -527,9 +566,14 @@ impl ConnectionHandler {
                     50
                 };
 
-                self.client.set_client_volume(client_id, volume, muted).await
+                self.client
+                    .set_client_volume(client_id, volume, muted)
+                    .await
             }
-            SnapcastCommand::SetStream { client_id, stream_id } => {
+            SnapcastCommand::SetStream {
+                client_id,
+                stream_id,
+            } => {
                 // Find which group this client belongs to
                 let group_id = if let Some(conn) = &self.client.connection {
                     let mut found_group_id = None;
@@ -547,7 +591,9 @@ impl ConnectionHandler {
                 if let Some(gid) = group_id {
                     self.client.set_group_stream(gid, stream_id).await
                 } else {
-                    Err(SnapcastError::RpcError("Client not found in any group".to_string()))
+                    Err(SnapcastError::RpcError(
+                        "Client not found in any group".to_string(),
+                    ))
                 }
             }
         }

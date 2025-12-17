@@ -394,25 +394,25 @@ impl DisplayManager {
         // Button 0: Mute status (T044)
         let muted = layout.mute_status == "MUTED";
         self.render_mute_screen(device, 0, muted).await?;
-        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+        // sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
 
         // Button 1: Stream name (T045)
         self.render_stream_screen(device, 1, &layout.stream_name).await?;
-        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+        // sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
 
         // Button 2: Volume percentage (T043)
         self.render_volume_screen(device, 2, layout.volume_display.trim_end_matches('%').parse().unwrap_or(0))
             .await?;
-        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+        // sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
 
         // Button 3: Connection status (T046)
         let connected = layout.connection_status == "Connected";
         self.render_connection_screen(device, 3, connected).await?;
-        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+        // sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
 
         // Button 4: Server address (T047)
         self.render_server_screen(device, 4, &layout.server_address).await?;
-        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+        // sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
 
         // Button 5: Room name (T048)
         self.render_room_screen(device, 5, &layout.room_name).await?;

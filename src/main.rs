@@ -9,8 +9,15 @@ use tokio::sync::{mpsc::unbounded_channel, watch};
 
 use crate::config::settings::ConnectionSettings;
 use crate::controller::state::ApplicationState;
-use crate::hardware::{device::DeviceManager, events::{HardwareEvent, HardwareCommand}, display::StatusPageLayout};
-use crate::snapcast::{client::SnapcastClient, types::{SnapcastEvent, SnapcastCommand}};
+use crate::hardware::{
+    device::DeviceManager,
+    display::StatusPageLayout,
+    events::{HardwareCommand, HardwareEvent},
+};
+use crate::snapcast::{
+    client::SnapcastClient,
+    types::{SnapcastCommand, SnapcastEvent},
+};
 
 mod config;
 mod controller;
@@ -37,7 +44,8 @@ async fn main() {
     let (hardware_event_tx, mut hardware_event_rx) = unbounded_channel::<HardwareEvent>();
     let (snapcast_event_tx, mut snapcast_event_rx) = unbounded_channel::<SnapcastEvent>();
     // Watch channel for screen updates - always holds latest state, drops old updates
-    let (hardware_command_tx, hardware_command_rx) = watch::channel::<Option<HardwareCommand>>(None);
+    let (hardware_command_tx, hardware_command_rx) =
+        watch::channel::<Option<HardwareCommand>>(None);
     let (snapcast_command_tx, snapcast_command_rx) = unbounded_channel::<SnapcastCommand>();
 
     // Parse server address
@@ -46,15 +54,35 @@ async fn main() {
         .expect("Invalid server address");
 
     // T033: Create tokio task for hardware event listening and display updates
-    let hardware_manager = DeviceManager::new(hardware_event_tx);
-    let hardware_task = tokio::spawn(async move {
-        if let Err(e) = hardware::device::device_monitor_loop(
-            hardware_manager,
-            Duration::from_millis(10),
-            hardware_command_rx,
-        )
-        .await {
-            eprintln!("Hardware monitor loop failed: {}", e);
+    let hardware_manager = std::sync::Arc::new(tokio::sync::Mutex::new(DeviceManager::new(hardware_event_tx)));
+
+    // Spawn device connection/health monitoring task
+    let hardware_monitor_task = tokio::spawn({
+        let manager = hardware_manager.clone();
+        async move {
+            if let Err(e) = hardware::device::device_monitor_loop(
+                manager,
+                Duration::from_millis(10),
+            )
+            .await
+            {
+                eprintln!("Hardware monitor loop failed: {}", e);
+            }
+        }
+    });
+
+    // Spawn display update task
+    let hardware_display_task = tokio::spawn({
+        let manager = hardware_manager.clone();
+        async move {
+            if let Err(e) = hardware::device::device_display_loop(
+                manager,
+                hardware_command_rx,
+            )
+            .await
+            {
+                eprintln!("Hardware display loop failed: {}", e);
+            }
         }
     });
 
@@ -68,7 +96,12 @@ async fn main() {
         snapcast_event_tx,
     );
     let snapcast_task = async move {
-        let _ = snapcast::client::message_loop(snapcast_client, Duration::from_secs(2), snapcast_command_rx).await;
+        let _ = snapcast::client::message_loop(
+            snapcast_client,
+            Duration::from_secs(2),
+            snapcast_command_rx,
+        )
+        .await;
     };
 
     // T032: Implement main event loop
@@ -139,7 +172,8 @@ async fn main() {
     }
 
     // Clean shutdown
-    hardware_task.abort();
+    hardware_monitor_task.abort();
+    hardware_display_task.abort();
 
     println!("Application terminated");
 }
@@ -151,6 +185,7 @@ async fn handle_hardware_event(
     _hardware_command_tx: &watch::Sender<Option<HardwareCommand>>,
     snapcast_command_tx: &tokio::sync::mpsc::UnboundedSender<SnapcastCommand>,
 ) -> bool {
+    println!("Handle hardware event: {:?}", event);
     match event {
         HardwareEvent::DeviceConnected => {
             println!("Hardware event: Device connected");
@@ -171,8 +206,10 @@ async fn handle_hardware_event(
         // T065-T066: Knob rotation controls volume (handled in ApplicationState)
         HardwareEvent::KnobRotated { knob_id, delta } => {
             if let Some((client_id, new_volume)) = state.handle_knob_rotated(knob_id, delta) {
-                println!("Hardware event: Knob {} rotated (delta: {}) - Volume: {}%",
-                         knob_id, delta, new_volume);
+                println!(
+                    "Hardware event: Knob {} rotated (delta: {}) - Volume: {}%",
+                    knob_id, delta, new_volume
+                );
 
                 // T066: Send SetVolume command to Snapcast
                 let _ = snapcast_command_tx.send(SnapcastCommand::SetVolume {
@@ -181,14 +218,16 @@ async fn handle_hardware_event(
                 });
 
                 // State changed, trigger screen refresh
-                return true;
+                return false;
             }
         }
         // T067-T068: Button press handling (handled in ApplicationState)
         HardwareEvent::ButtonPressed { button_id } => {
             if let Some((client_id, new_muted)) = state.handle_button_pressed(button_id) {
-                println!("Hardware event: Button {} pressed - Mute: {}",
-                         button_id, new_muted);
+                println!(
+                    "Hardware event: Button {} pressed - Mute: {}",
+                    button_id, new_muted
+                );
 
                 // T068: Send SetMuted command to Snapcast
                 let _ = snapcast_command_tx.send(SnapcastCommand::SetMuted {
@@ -197,12 +236,13 @@ async fn handle_hardware_event(
                 });
 
                 // State changed, trigger screen refresh
-                return true;
+                return false;
             } else if button_id == 1 {
                 // T061: Button 1 switches to stream selection page
                 println!("Hardware event: Button 1 pressed - Switching to stream selection");
                 state.current_page = crate::controller::state::PageView::StreamSelection;
                 // TODO: Implement stream selection page rendering in future phase
+                return false;
             }
         }
         _ => {
@@ -215,7 +255,8 @@ async fn handle_hardware_event(
 /// Handle Snapcast events (T037, T049-T052)
 /// Returns true if screen refresh is needed
 async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEvent) -> bool {
-    match event {
+    println!("Handle snapcast event: {:?}", event);
+    let changed = match event {
         SnapcastEvent::ServerReconnected { room, streams } => {
             println!("Snapcast event: Server reconnected");
             state.set_server_connected(true);
@@ -228,10 +269,7 @@ async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEven
             if let Some(room_state) = room {
                 println!(
                     "  Room '{}' found - Volume: {}%, Muted: {}, Connected: {}",
-                    room_state.name,
-                    room_state.volume,
-                    room_state.muted,
-                    room_state.connected
+                    room_state.name, room_state.volume, room_state.muted, room_state.connected
                 );
                 state.update_room_state(room_state);
 
@@ -254,40 +292,48 @@ async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEven
             false
         }
         // T049: Handle volume/mute changes
-        SnapcastEvent::ClientVolumeChanged { client_id, volume, muted } => {
-            println!("Snapcast event: Volume changed for client '{}' - Volume: {}%, Muted: {}",
-                     client_id, volume, muted);
+        SnapcastEvent::ClientVolumeChanged {
+            client_id,
+            volume,
+            muted,
+        } => {
+            println!(
+                "Snapcast event: Volume changed for client '{}' - Volume: {}%, Muted: {}",
+                client_id, volume, muted
+            );
             let changed = state.handle_volume_changed(&client_id, volume, muted);
-            if changed {
-                println!("  Room state updated, triggering screen refresh");
-            }
+
             changed // T052: Return true if refresh needed
         }
         // T050: Handle stream changes
-        SnapcastEvent::StreamChanged { client_id, stream_id } => {
-            println!("Snapcast event: Stream changed for client '{}' to '{}'",
-                     client_id, stream_id);
+        SnapcastEvent::StreamChanged {
+            client_id,
+            stream_id,
+        } => {
+            println!(
+                "Snapcast event: Stream changed for client '{}' to '{}'",
+                client_id, stream_id
+            );
             let changed = state.handle_stream_changed(&client_id, stream_id);
-            if changed {
-                println!("  Room state updated, triggering screen refresh");
-            }
+
             changed // T052: Return true if refresh needed
         }
         // T051: Handle stream updates
         SnapcastEvent::StreamUpdate { stream_id, stream } => {
-            println!("Snapcast event: Stream '{}' updated - Name: '{}', Status: {:?}",
-                     stream_id, stream.name, stream.status);
+            println!(
+                "Snapcast event: Stream '{}' updated - Name: '{}', Status: {:?}",
+                stream_id, stream.name, stream.status
+            );
             let changed = state.handle_stream_update(&stream_id, stream);
-            if changed {
-                println!("  Stream state updated, triggering screen refresh");
-            }
             changed // T052: Return true if refresh needed
         }
         _ => {
             // Other Snapcast events (ClientConnected, ClientDisconnected)
             false
         }
-    }
+    };
+    eprintln!("Event changed: {}", changed);
+    changed
 }
 
 /// Build StatusPageLayout from current application state
@@ -295,13 +341,18 @@ fn build_status_layout(state: &ApplicationState) -> Option<StatusPageLayout> {
     let room = state.room.as_ref()?;
 
     // Get stream name if we have a stream_id
-    let stream_name = room.stream_id.as_ref()
+    let stream_name = room
+        .stream_id
+        .as_ref()
         .and_then(|id| state.get_stream_name(id))
         .or(Some("No Stream".to_string()))?;
 
     Some(StatusPageLayout::from_room_state(
         &room.name,
-        &format!("{}:{}", state.config.server.address, state.config.server.port),
+        &format!(
+            "{}:{}",
+            state.config.server.address, state.config.server.port
+        ),
         room.volume,
         room.muted,
         room.connected,
