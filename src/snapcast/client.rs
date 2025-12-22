@@ -305,20 +305,50 @@ impl SnapcastClient {
                     muted,
                 });
             }
-            SnapcastResult::ClientSetLatency(_, set_latency_result) => todo!(),
-            SnapcastResult::ClientSetName(_, set_name_result) => todo!(),
-            SnapcastResult::GroupGetStatus(get_status_result) => todo!(),
-            SnapcastResult::GroupSetMute(_, set_mute_result) => todo!(),
-            SnapcastResult::GroupSetStream(_, set_stream_result) => todo!(),
-            SnapcastResult::GroupSetClients(set_clients_result) => todo!(),
-            SnapcastResult::GroupSetName(_, set_name_result) => todo!(),
-            SnapcastResult::ServerGetRPCVersion(get_rpc_version_result) => todo!(),
-            SnapcastResult::ServerGetStatus(get_status_result) => todo!(),
-            SnapcastResult::ServerDeleteClient(delete_client_result) => todo!(),
-            SnapcastResult::StreamAddStream(add_stream_result) => todo!(),
-            SnapcastResult::StreamRemoveStream(remove_stream_result) => todo!(),
-            SnapcastResult::StreamControl(_) => todo!(),
-            SnapcastResult::StreamSetProperty(_) => todo!(),
+            SnapcastResult::ClientSetLatency(_, _set_latency_result) => {
+                // Latency changes not tracked for now
+            }
+            SnapcastResult::ClientSetName(_, _set_name_result) => {
+                // Name changes not tracked for now
+            }
+            SnapcastResult::GroupGetStatus(_get_status_result) => {
+                // Group status queries not tracked for now
+            }
+            SnapcastResult::GroupSetMute(_, _set_mute_result) => {
+                // Mute is handled via ClientSetVolume notifications
+            }
+            SnapcastResult::GroupSetStream(_group_id, result) => {
+                // Stream change acknowledged. The server will send Group.OnStreamChanged
+                // notifications for each client in the group
+                eprintln!("Group stream set to '{}' (waiting for notifications)", result.stream_id);
+            }
+            SnapcastResult::GroupSetClients(_set_clients_result) => {
+                // Client group assignments not tracked for now
+            }
+            SnapcastResult::GroupSetName(_, _set_name_result) => {
+                // Group name changes not tracked for now
+            }
+            SnapcastResult::ServerGetRPCVersion(_get_rpc_version_result) => {
+                // RPC version queries not tracked for now
+            }
+            SnapcastResult::ServerGetStatus(_get_status_result) => {
+                // Server status is handled via initial connection
+            }
+            SnapcastResult::ServerDeleteClient(_delete_client_result) => {
+                // Client deletion not tracked for now
+            }
+            SnapcastResult::StreamAddStream(_add_stream_result) => {
+                // Stream additions not tracked for now
+            }
+            SnapcastResult::StreamRemoveStream(_remove_stream_result) => {
+                // Stream removals not tracked for now
+            }
+            SnapcastResult::StreamControl(_) => {
+                // Stream control commands not tracked for now
+            }
+            SnapcastResult::StreamSetProperty(_) => {
+                // Stream property changes not tracked for now
+            }
         }
     }
 
