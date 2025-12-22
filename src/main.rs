@@ -22,6 +22,7 @@ use crate::snapcast::{
 mod config;
 mod controller;
 mod hardware;
+mod homeassistant;
 mod snapcast;
 
 #[tokio::main]

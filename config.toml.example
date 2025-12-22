@@ -19,3 +19,25 @@ client_id = "living-room"
 # [server.auth]
 # username = "admin"
 # password = "secret"
+
+
+# Home Assistant MQTT Integration (optional)
+# Enables amplifier control via IR Blaster
+[homeassistant]
+broker_address = "192.168.1.100"
+broker_port = 1883
+username = "controller"  # optional
+password = "secret"      # optional
+
+# MQTT topic for sending IR commands to Tasmota IR Blaster
+# Replace with your IR Blaster device's topic
+ir_blaster_topic = "tasmota_17DD9F/cmnd/irsend"
+
+[homeassistant.amplifier]
+# Home Assistant entity for amplifier power state
+power_entity = "switch.amplifier_power"
+
+# Note: Source selection is managed locally by the controller
+# IR commands are sent directly to the IR Blaster for:
+# - Source selection (Phono, CD, Spotify, Source 4, Source 5)
+# - Volume control (Up/Down via rotary knob)

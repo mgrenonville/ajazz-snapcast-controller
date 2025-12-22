@@ -1,7 +1,11 @@
 // Controller state - Central state machine for the application
 
 use crate::config::settings::ConnectionSettings;
+use crate::homeassistant::types::{AmplifierState, HomeAssistantEvent};
+use crate::homeassistant::AmplifierSource;
 use crate::snapcast::types::{AudioStream, RoomState};
+use std::fs;
+use std::path::PathBuf;
 use std::time::Instant;
 
 /// Central state machine for the application
@@ -21,6 +25,12 @@ pub struct ApplicationState {
 
     /// Snapcast server connection status
     pub server_connected: bool,
+
+    /// Home Assistant MQTT broker connection status
+    pub homeassistant_connected: bool,
+
+    /// Amplifier state (None if Home Assistant not configured or disconnected)
+    pub amplifier: Option<AmplifierState>,
 
     /// UI state for stream selection (index into streams vec)
     pub selected_stream_index: usize,
@@ -49,17 +59,29 @@ pub enum PageView {
 
     /// Show connection status, server address
     Settings,
+
+    /// Show amplifier power and source control
+    AmplifierControl,
 }
 
 impl ApplicationState {
     /// Create a new ApplicationState with loaded configuration
     pub fn new(config: ConnectionSettings) -> Self {
+        // Initialize amplifier state if Home Assistant is configured
+        let amplifier = if config.homeassistant.is_some() {
+            Some(AmplifierState::new())
+        } else {
+            None
+        };
+
         Self {
             config,
             room: None,
             streams: Vec::new(),
             hardware_connected: false,
             server_connected: false,
+            homeassistant_connected: false,
+            amplifier,
             selected_stream_index: 0,
             current_page: PageView::Status,
             last_state_change: None,
@@ -283,5 +305,153 @@ impl ApplicationState {
         let client_id = room.client_id.clone();
 
         Some((client_id, new_muted))
+    }
+
+    /// Handle Home Assistant events and update amplifier state
+    /// Returns true if screen refresh is needed
+    pub fn handle_homeassistant_event(&mut self, event: HomeAssistantEvent) -> bool {
+        match event {
+            HomeAssistantEvent::BrokerConnected => {
+                self.homeassistant_connected = true;
+                eprintln!("Home Assistant connected");
+                // Refresh screen if on amplifier control page
+                self.current_page == PageView::AmplifierControl
+            }
+
+            HomeAssistantEvent::BrokerDisconnected => {
+                self.homeassistant_connected = false;
+                eprintln!("Home Assistant disconnected");
+                // Mark amplifier as unknown
+                if let Some(ref mut amplifier) = self.amplifier {
+                    amplifier.power_on = None;
+                    amplifier.current_source = None;
+                    amplifier.set_availability(crate::homeassistant::types::EntityAvailability::Unknown);
+                }
+                // Refresh screen if on amplifier control page
+                self.current_page == PageView::AmplifierControl
+            }
+
+            HomeAssistantEvent::EntityStateChanged { entity_id, state } => {
+                if let Some(ref mut amplifier) = self.amplifier {
+                    // Only handle power state changes (source is managed locally)
+                    if let Some(ref ha_config) = self.config.homeassistant {
+                        if entity_id == ha_config.amplifier.power_entity {
+                            // Power state changed
+                            let power_on = state.to_uppercase() == "ON";
+                            amplifier.set_power(power_on);
+                            eprintln!("Amplifier power: {}", if power_on { "ON" } else { "OFF" });
+                            self.last_state_change = Some(Instant::now());
+                            return self.current_page == PageView::AmplifierControl;
+                        }
+                    }
+                }
+                false
+            }
+
+            HomeAssistantEvent::EntityAvailabilityChanged {
+                entity_id: _,
+                available,
+            } => {
+                if let Some(ref mut amplifier) = self.amplifier {
+                    let availability = if available {
+                        crate::homeassistant::types::EntityAvailability::Available
+                    } else {
+                        crate::homeassistant::types::EntityAvailability::Unavailable
+                    };
+                    amplifier.set_availability(availability);
+                    eprintln!("Amplifier availability: {:?}", availability);
+                    self.last_state_change = Some(Instant::now());
+                    return self.current_page == PageView::AmplifierControl;
+                }
+                false
+            }
+
+            HomeAssistantEvent::CommandAcknowledged { entity_id } => {
+                eprintln!("Command acknowledged for {}", entity_id);
+                // Could show visual feedback here
+                false
+            }
+
+            HomeAssistantEvent::CommandFailed { entity_id, error } => {
+                eprintln!("Command failed for {}: {}", entity_id, error);
+                // Could show error on screen
+                self.current_page == PageView::AmplifierControl
+            }
+        }
+    }
+
+    /// Get amplifier state reference
+    pub fn get_amplifier_state(&self) -> Option<&AmplifierState> {
+        self.amplifier.as_ref()
+    }
+
+    /// Check if power toggle is allowed
+    pub fn can_toggle_power(&self) -> bool {
+        self.homeassistant_connected
+            && self
+                .amplifier
+                .as_ref()
+                .map(|a| a.power_on.is_some())
+                .unwrap_or(false)
+    }
+
+    /// Check if source selection is allowed
+    pub fn can_select_source(&self) -> bool {
+        self.homeassistant_connected && self.amplifier.is_some()
+    }
+
+    /// Update selected source (local state)
+    pub fn set_selected_source(&mut self, source: crate::homeassistant::AmplifierSource) {
+        if let Some(ref mut amplifier) = self.amplifier {
+            amplifier.set_source(source);
+            self.last_state_change = Some(Instant::now());
+        }
+    }
+
+    /// Get selected source
+    pub fn get_selected_source(&self) -> Option<AmplifierSource> {
+        self.amplifier.as_ref().map(|a| a.selected_source)
+    }
+
+    /// Get path to amplifier state file
+    fn get_amplifier_state_file() -> Option<PathBuf> {
+        dirs::config_dir().map(|mut path| {
+            path.push("snapcast-controller");
+            path.push("amplifier_state.json");
+            path
+        })
+    }
+
+    /// Save selected source to file
+    pub fn save_selected_source(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(source) = self.get_selected_source() {
+            if let Some(state_file) = Self::get_amplifier_state_file() {
+                // Create parent directory if it doesn't exist
+                if let Some(parent) = state_file.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+
+                // Serialize and save
+                let json = serde_json::to_string(&source)?;
+                fs::write(state_file, json)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Load selected source from file
+    pub fn load_selected_source(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(state_file) = Self::get_amplifier_state_file() {
+            if state_file.exists() {
+                let json = fs::read_to_string(state_file)?;
+                let source: AmplifierSource = serde_json::from_str(&json)?;
+
+                // Set the source in amplifier state
+                self.set_selected_source(source);
+
+                eprintln!("Loaded amplifier source: {}", source.display_name());
+            }
+        }
+        Ok(())
     }
 }
