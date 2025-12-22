@@ -118,9 +118,9 @@ async fn main() {
 
                 // Trigger screen refresh if hardware just connected and we have state
                 if needs_refresh && app_state.needs_screen_refresh() {
-                    if let Some(layout) = build_status_layout(&app_state) {
+                    if let Some(command) = build_display_command(&app_state) {
                         // Send always succeeds, overwrites any pending update with latest state
-                        let _ = hardware_command_tx.send(Some(HardwareCommand::UpdateStatusPage(layout)));
+                        let _ = hardware_command_tx.send(Some(command));
                         app_state.mark_screen_update_completed();
                     }
                 }
@@ -140,9 +140,9 @@ async fn main() {
                     }
 
                     // Send display update command to hardware task
-                    if let Some(layout) = build_status_layout(&app_state) {
+                    if let Some(command) = build_display_command(&app_state) {
                         // Send always succeeds, overwrites any pending update with latest state
-                        let _ = hardware_command_tx.send(Some(HardwareCommand::UpdateStatusPage(layout)));
+                        let _ = hardware_command_tx.send(Some(command));
 
                         // Mark screen update as completed
                         app_state.mark_screen_update_completed();
@@ -211,6 +211,9 @@ async fn handle_hardware_event(
                     knob_id, delta, new_volume
                 );
 
+                // T074: Mark control command sent for latency tracking
+                state.mark_control_command_sent();
+
                 // T066: Send SetVolume command to Snapcast
                 let _ = snapcast_command_tx.send(SnapcastCommand::SetVolume {
                     client_id,
@@ -221,28 +224,72 @@ async fn handle_hardware_event(
                 return false;
             }
         }
-        // T067-T068: Button press handling (handled in ApplicationState)
+        // T067-T068: Button press handling (depends on current page)
         HardwareEvent::ButtonPressed { button_id } => {
-            if let Some((client_id, new_muted)) = state.handle_button_pressed(button_id) {
-                println!(
-                    "Hardware event: Button {} pressed - Mute: {}",
-                    button_id, new_muted
-                );
+            match state.current_page {
+                crate::controller::state::PageView::Status => {
+                    // On status page, button 0 toggles mute
+                    if let Some((client_id, new_muted)) = state.handle_button_pressed(button_id) {
+                        println!(
+                            "Hardware event: Button {} pressed - Mute: {}",
+                            button_id, new_muted
+                        );
 
-                // T068: Send SetMuted command to Snapcast
-                let _ = snapcast_command_tx.send(SnapcastCommand::SetMuted {
-                    client_id,
-                    muted: new_muted,
-                });
+                        // T074: Mark control command sent for latency tracking
+                        state.mark_control_command_sent();
 
-                // State changed, trigger screen refresh
-                return false;
-            } else if button_id == 1 {
-                // T061: Button 1 switches to stream selection page
-                println!("Hardware event: Button 1 pressed - Switching to stream selection");
-                state.current_page = crate::controller::state::PageView::StreamSelection;
-                // TODO: Implement stream selection page rendering in future phase
-                return false;
+                        // T068: Send SetMuted command to Snapcast
+                        let _ = snapcast_command_tx.send(SnapcastCommand::SetMuted {
+                            client_id,
+                            muted: new_muted,
+                        });
+
+                        // State changed, trigger screen refresh
+                        return false;
+                    }
+                }
+                crate::controller::state::PageView::StreamSelection => {
+                    // T071: On stream selection page, buttons select streams
+                    if button_id < 6 && (button_id as usize) < state.streams.len() {
+                        println!("Hardware event: Button {} pressed - Selecting stream", button_id);
+                        state.selected_stream_index = button_id as usize;
+
+                        // T074: Mark control command sent for latency tracking
+                        state.mark_control_command_sent();
+
+                        // T072: Send AssignStream command
+                        if let Some(room) = &state.room {
+                            let stream_id = state.streams[button_id as usize].stream_id.clone();
+                            let client_id = room.client_id.clone();
+                            let _ = snapcast_command_tx.send(SnapcastCommand::SetStream {
+                                client_id,
+                                stream_id,
+                            });
+                        }
+
+                        // Switch back to status page after selection
+                        state.current_page = crate::controller::state::PageView::Status;
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+        // T070: Page button press handling for page switching
+        HardwareEvent::PageButtonPressed { page_id } => {
+            println!("Hardware event: Page button {} pressed", page_id);
+            match page_id {
+                0 => {
+                    // Page button 0: Status page
+                    state.current_page = crate::controller::state::PageView::Status;
+                    return true;
+                }
+                1 => {
+                    // Page button 1: Stream selection page
+                    state.current_page = crate::controller::state::PageView::StreamSelection;
+                    return true;
+                }
+                _ => {}
             }
         }
         _ => {
@@ -301,6 +348,15 @@ async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEven
                 "Snapcast event: Volume changed for client '{}' - Volume: {}%, Muted: {}",
                 client_id, volume, muted
             );
+
+            // T074: Validate control command latency
+            let (is_valid, elapsed) = state.validate_control_command_latency();
+            if let Some(ms) = elapsed {
+                if is_valid {
+                    println!("  Control command feedback latency: {}ms (within 500ms limit)", ms);
+                }
+            }
+
             let changed = state.handle_volume_changed(&client_id, volume, muted);
 
             changed // T052: Return true if refresh needed
@@ -314,6 +370,15 @@ async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEven
                 "Snapcast event: Stream changed for client '{}' to '{}'",
                 client_id, stream_id
             );
+
+            // T074: Validate control command latency
+            let (is_valid, elapsed) = state.validate_control_command_latency();
+            if let Some(ms) = elapsed {
+                if is_valid {
+                    println!("  Control command feedback latency: {}ms (within 500ms limit)", ms);
+                }
+            }
+
             let changed = state.handle_stream_changed(&client_id, stream_id);
 
             changed // T052: Return true if refresh needed
@@ -358,6 +423,31 @@ fn build_status_layout(state: &ApplicationState) -> Option<StatusPageLayout> {
         room.connected,
         Some(&stream_name),
     ))
+}
+
+/// Build appropriate HardwareCommand based on current page view
+fn build_display_command(state: &ApplicationState) -> Option<HardwareCommand> {
+    use crate::hardware::display::StreamSelectionPageLayout;
+
+    match state.current_page {
+        crate::controller::state::PageView::Status => {
+            // Build and send status page layout
+            let layout = build_status_layout(state)?;
+            Some(HardwareCommand::UpdateStatusPage(layout))
+        }
+        crate::controller::state::PageView::StreamSelection => {
+            // Build and send stream selection page layout
+            let layout = StreamSelectionPageLayout::from_streams(
+                &state.streams,
+                state.selected_stream_index,
+            );
+            Some(HardwareCommand::UpdateStreamSelectionPage(layout))
+        }
+        _ => {
+            // Other pages not yet implemented
+            None
+        }
+    }
 }
 
 /// Get the configuration file path

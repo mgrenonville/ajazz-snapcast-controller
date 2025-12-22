@@ -330,6 +330,21 @@ pub async fn device_display_loop(
                                 eprintln!("Failed to update status page: {}", e);
                             }
                         }
+                        HardwareCommand::UpdateStreamSelectionPage(layout) => {
+                            eprintln!("Update stream selection page: {:?}", layout);
+                            if let Err(e) =
+                                display_manager.render_stream_selection_page(device, &layout).await
+                            {
+                                eprintln!("Failed to update stream selection page: {}", e);
+                            }
+                        }
+                        HardwareCommand::ShowError(error_msg) => {
+                            eprintln!("Showing error: {}", error_msg);
+                            if let Err(e) = display_manager.render_error(device, &error_msg).await
+                            {
+                                eprintln!("Failed to show error: {}", e);
+                            }
+                        }
                     }
                 }
             }

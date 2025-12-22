@@ -33,6 +33,9 @@ pub struct ApplicationState {
 
     /// T054: Timestamp of last screen update completion
     last_screen_update: Option<Instant>,
+
+    /// T074: Timestamp of last control command sent (volume/mute/stream change)
+    last_control_command: Option<Instant>,
 }
 
 /// Page views displayed on hardware controller
@@ -61,6 +64,7 @@ impl ApplicationState {
             current_page: PageView::Status,
             last_state_change: None,
             last_screen_update: None,
+            last_control_command: None,
         }
     }
 
@@ -201,6 +205,39 @@ impl ApplicationState {
     /// T054: Get time since last state change
     pub fn time_since_state_change(&self) -> Option<u128> {
         self.last_state_change.map(|t| t.elapsed().as_millis())
+    }
+
+    /// T074: Mark that a control command was sent
+    pub fn mark_control_command_sent(&mut self) {
+        self.last_control_command = Some(Instant::now());
+    }
+
+    /// T074: Validate control command feedback latency (< 500ms)
+    /// Should be called when server confirms command execution
+    /// Returns (is_valid, elapsed_time_ms)
+    pub fn validate_control_command_latency(&mut self) -> (bool, Option<u128>) {
+        if let Some(command_time) = self.last_control_command {
+            let elapsed = command_time.elapsed();
+            let elapsed_ms = elapsed.as_millis();
+
+            // Validate < 500ms
+            let is_valid = elapsed_ms < 500;
+
+            if !is_valid {
+                eprintln!(
+                    "WARNING: Control command feedback latency exceeded 500ms: {}ms",
+                    elapsed_ms
+                );
+            }
+
+            // Clear the timestamp after validation
+            self.last_control_command = None;
+
+            return (is_valid, Some(elapsed_ms));
+        }
+
+        // No command timestamp available
+        (true, None)
     }
 
     /// T065: Handle knob rotation events

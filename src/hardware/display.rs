@@ -536,4 +536,146 @@ impl DisplayManager {
         self.draw_centered_text(&mut image, &display_name, 14.0, 5);
         self.send_image_to_button(device, button, image).await
     }
+
+    /// Render stream selection screen for a single button
+    /// T069: Display stream name on button with selection indicator
+    pub async fn render_stream_button(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        button: u8,
+        stream_name: Option<&str>,
+        is_selected: bool,
+    ) -> Result<(), HardwareError> {
+        let mut image = self.create_blank_image();
+
+        if let Some(name) = stream_name {
+            // Show selection indicator
+            if is_selected {
+                self.draw_top_label(&mut image, ">", 16.0, 2);
+            }
+
+            // Truncate stream name if too long
+            let display_name = if name.len() > 10 {
+                format!("{}...", &name[0..7])
+            } else {
+                name.to_string()
+            };
+
+            self.draw_centered_text(&mut image, &display_name, 13.0, 5);
+        } else {
+            // Empty slot
+            self.draw_centered_text(&mut image, "---", 14.0, 0);
+        }
+
+        self.send_image_to_button(device, button, image).await
+    }
+
+    /// Render complete stream selection page layout to all button screens
+    /// T069: Display available streams across 6 button screens
+    pub async fn render_stream_selection_page(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        layout: &StreamSelectionPageLayout,
+    ) -> Result<(), HardwareError> {
+        // Render each of the 6 buttons with stream names
+        for button in 0..6 {
+            self.render_stream_button(
+                device,
+                button,
+                layout.stream_names[button as usize].as_deref(),
+                layout.selected_button == Some(button),
+            )
+            .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Render error message on screens
+    /// T073: Display error message when command fails
+    pub async fn render_error(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        error_message: &str,
+    ) -> Result<(), HardwareError> {
+        // Display error on all button screens
+        for button in 0..6 {
+            let mut image = self.create_blank_image();
+            self.draw_top_label(&mut image, "ERROR", 12.0, 5);
+
+            // Split error message into words that fit
+            let words: Vec<&str> = error_message.split_whitespace().collect();
+            let max_chars = 10;
+            let mut lines = Vec::new();
+            let mut current_line = String::new();
+
+            for word in words {
+                if current_line.len() + word.len() + 1 <= max_chars {
+                    if !current_line.is_empty() {
+                        current_line.push(' ');
+                    }
+                    current_line.push_str(word);
+                } else {
+                    if !current_line.is_empty() {
+                        lines.push(current_line);
+                    }
+                    current_line = word.to_string();
+                }
+            }
+            if !current_line.is_empty() {
+                lines.push(current_line);
+            }
+
+            // Draw up to 3 lines
+            let line_height = 12;
+            let start_y = 30;
+            for (i, line) in lines.iter().take(3).enumerate() {
+                let scale = PxScale::from(10.0);
+                let (width, _) = text_size(scale, &self.font, line);
+                let x = ((BUTTON_SCREEN_WIDTH as i32 - width as i32) / 2).max(0);
+                let y = start_y + (i as i32 * line_height);
+                draw_text_mut(&mut image, TEXT_COLOR, x, y, scale, &self.font, line);
+            }
+
+            self.send_image_to_button(device, button, image).await?;
+        }
+
+        Ok(())
+    }
+}
+
+/// Stream selection page layout data
+/// T069: Layout for stream selection page showing available streams
+#[derive(Debug, Clone)]
+pub struct StreamSelectionPageLayout {
+    /// Stream names for buttons 0-5 (None if no stream at that position)
+    pub stream_names: [Option<String>; 6],
+
+    /// Which button is currently selected (None if no selection)
+    pub selected_button: Option<u8>,
+}
+
+impl StreamSelectionPageLayout {
+    /// Create a new stream selection page layout from available streams
+    /// T069: Build stream selection page layout data structure
+    pub fn from_streams(streams: &[crate::snapcast::types::AudioStream], selected_index: usize) -> Self {
+        let mut stream_names: [Option<String>; 6] = Default::default();
+
+        // Fill in up to 6 streams
+        for (i, stream) in streams.iter().take(6).enumerate() {
+            stream_names[i] = Some(stream.name.clone());
+        }
+
+        // Determine selected button (if selected_index is within displayed range)
+        let selected_button = if selected_index < 6 {
+            Some(selected_index as u8)
+        } else {
+            None
+        };
+
+        Self {
+            stream_names,
+            selected_button,
+        }
+    }
 }
