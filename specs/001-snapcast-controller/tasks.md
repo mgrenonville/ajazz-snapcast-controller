@@ -140,13 +140,13 @@
 - [x] T066 [US3] Send ControllerCommand::SetVolume to Snapcast when knob rotated in src/controller/state.rs
 - [x] T067 [US3] Handle HardwareEvent::ButtonPressed for button 0 (mute toggle) in src/controller/state.rs
 - [x] T068 [US3] Send ControllerCommand::SetMute to Snapcast when button 0 pressed in src/controller/state.rs
-- [ ] T069 [US3] Implement stream selection page screen layout in src/hardware/display.rs (buttons 0-5 show streams)
-- [ ] T070 [US3] Handle page button press to switch between Status and StreamSelection views in src/controller/state.rs
-- [ ] T071 [US3] Handle button press in StreamSelection page to select stream in src/controller/state.rs
-- [ ] T072 [US3] Send ControllerCommand::AssignStream when stream button pressed in src/controller/state.rs
-- [ ] T073 [US3] Implement error display on screens when command fails in src/hardware/display.rs
-- [ ] T074 [US3] Add 500ms latency validation for control command → feedback in src/controller/state.rs
-- [ ] T075 [US3] Handle rapid successive control inputs (queue or debounce) in src/controller/state.rs
+- [x] T069 [US3] Implement stream selection page screen layout in src/hardware/display.rs (buttons 0-5 show streams)
+- [x] T070 [US3] Handle page button press to switch between Status and StreamSelection views in src/controller/state.rs
+- [x] T071 [US3] Handle button press in StreamSelection page to select stream in src/controller/state.rs
+- [x] T072 [US3] Send ControllerCommand::AssignStream when stream button pressed in src/controller/state.rs
+- [x] T073 [US3] Implement error display on screens when command fails in src/hardware/display.rs
+- [x] T074 [US3] Add 500ms latency validation for control command → feedback in src/controller/state.rs
+- [x] T075 [US3] Handle rapid successive control inputs (queue or debounce) in src/controller/state.rs
 
 **Checkpoint**: All user stories should now be independently functional. Full audio control via hardware controller working.
 
