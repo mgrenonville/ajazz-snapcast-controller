@@ -206,7 +206,7 @@ impl ApplicationState {
     /// T065: Handle knob rotation events
     pub fn handle_knob_rotated(&self, knob_id: u8, delta: i8) -> Option<(String, u8)> {
         // Only knob 0 controls volume
-        if knob_id != 0 {
+        if knob_id != 1 {
             return None;
         }
 

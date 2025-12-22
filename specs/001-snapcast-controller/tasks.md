@@ -138,8 +138,8 @@
 - [x] T064 [US3] Find group containing room's client from Server.GetStatus in src/snapcast/client.rs
 - [x] T065 [US3] Handle HardwareEvent::KnobRotated in src/controller/state.rs
 - [x] T066 [US3] Send ControllerCommand::SetVolume to Snapcast when knob rotated in src/controller/state.rs
-- [ ] T067 [US3] Handle HardwareEvent::ButtonPressed for button 0 (mute toggle) in src/controller/state.rs
-- [ ] T068 [US3] Send ControllerCommand::SetMute to Snapcast when button 0 pressed in src/controller/state.rs
+- [x] T067 [US3] Handle HardwareEvent::ButtonPressed for button 0 (mute toggle) in src/controller/state.rs
+- [x] T068 [US3] Send ControllerCommand::SetMute to Snapcast when button 0 pressed in src/controller/state.rs
 - [ ] T069 [US3] Implement stream selection page screen layout in src/hardware/display.rs (buttons 0-5 show streams)
 - [ ] T070 [US3] Handle page button press to switch between Status and StreamSelection views in src/controller/state.rs
 - [ ] T071 [US3] Handle button press in StreamSelection page to select stream in src/controller/state.rs

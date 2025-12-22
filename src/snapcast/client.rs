@@ -413,7 +413,9 @@ impl SnapcastClient {
                     client_id: params.id,
                 });
             }
-
+            Notification::StreamOnProperties { params } => {
+                println!("received stream properties : {:?}", params);    
+            }
             // Other notifications are handled by the library's internal state
             _ => {}
         }
