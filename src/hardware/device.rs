@@ -266,12 +266,19 @@ impl DeviceConnectionHandler {
                                 });
                             }
 
+                            // T056: Page buttons
+                            Event::ButtonDown(button_id) if button_id >= 6 => {
+                                let _ = manager.event_tx.send(HardwareEvent::PageButtonPressed {
+                                    page_id: button_id - 6,
+                                });
+                            }
                             // T056: Button press/release events
                             Event::ButtonDown(button_id) => {
                                 let _ = manager
                                     .event_tx
                                     .send(HardwareEvent::ButtonPressed { button_id });
                             }
+
                             Event::ButtonUp(button_id) => {
                                 let _ = manager
                                     .event_tx
@@ -279,11 +286,7 @@ impl DeviceConnectionHandler {
                             }
 
                             // T057: Encoder press/release (treat as page buttons)
-                            Event::EncoderDown(encoder_id) => {
-                                let _ = manager.event_tx.send(HardwareEvent::PageButtonPressed {
-                                    page_id: encoder_id,
-                                });
-                            }
+                            Event::EncoderDown(_) => {}
 
                             // Ignore encoder up events for now
                             Event::EncoderUp(_) => {}
@@ -308,7 +311,7 @@ pub async fn device_display_loop(
     let display_manager = DisplayManager::new()?;
 
     loop {
-            eprintln!("device display loop");
+        eprintln!("device display loop");
 
         // Wait for display command
         if let Ok(()) = command_rx.changed().await {
@@ -332,16 +335,16 @@ pub async fn device_display_loop(
                         }
                         HardwareCommand::UpdateStreamSelectionPage(layout) => {
                             eprintln!("Update stream selection page: {:?}", layout);
-                            if let Err(e) =
-                                display_manager.render_stream_selection_page(device, &layout).await
+                            if let Err(e) = display_manager
+                                .render_stream_selection_page(device, &layout)
+                                .await
                             {
                                 eprintln!("Failed to update stream selection page: {}", e);
                             }
                         }
                         HardwareCommand::ShowError(error_msg) => {
                             eprintln!("Showing error: {}", error_msg);
-                            if let Err(e) = display_manager.render_error(device, &error_msg).await
-                            {
+                            if let Err(e) = display_manager.render_error(device, &error_msg).await {
                                 eprintln!("Failed to show error: {}", e);
                             }
                         }

@@ -114,10 +114,10 @@ impl ApplicationState {
 
     /// T050: Handle StreamChanged event
     /// Returns true if state changed and screen refresh is needed
-    pub fn handle_stream_changed(&mut self, client_id: &str, stream_id: String) -> bool {
+    pub fn handle_stream_changed(&mut self, group_id: &str, stream_id: String) -> bool {
         // Only update if this is our room's client
         if let Some(room) = &mut self.room {
-            if room.client_id == client_id {
+            if room.group_id == group_id {
                 let changed = room.stream_id.as_ref() != Some(&stream_id);
                 if changed {
                     room.stream_id = Some(stream_id);
@@ -180,8 +180,8 @@ impl ApplicationState {
     /// Returns (is_valid, elapsed_time_ms)
     pub fn validate_screen_update_latency(&self) -> (bool, Option<u128>) {
         if let (Some(state_change), Some(screen_update)) =
-            (self.last_state_change, self.last_screen_update) {
-
+            (self.last_state_change, self.last_screen_update)
+        {
             // Screen update should happen after state change
             if screen_update >= state_change {
                 let elapsed = screen_update.duration_since(state_change);
@@ -191,7 +191,10 @@ impl ApplicationState {
                 let is_valid = elapsed_ms < 2000;
 
                 if !is_valid {
-                    eprintln!("WARNING: Screen update latency exceeded 2 seconds: {}ms", elapsed_ms);
+                    eprintln!(
+                        "WARNING: Screen update latency exceeded 2 seconds: {}ms",
+                        elapsed_ms
+                    );
                 }
 
                 return (is_valid, Some(elapsed_ms));

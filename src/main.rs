@@ -54,17 +54,16 @@ async fn main() {
         .expect("Invalid server address");
 
     // T033: Create tokio task for hardware event listening and display updates
-    let hardware_manager = std::sync::Arc::new(tokio::sync::Mutex::new(DeviceManager::new(hardware_event_tx)));
+    let hardware_manager = std::sync::Arc::new(tokio::sync::Mutex::new(DeviceManager::new(
+        hardware_event_tx,
+    )));
 
     // Spawn device connection/health monitoring task
     let hardware_monitor_task = tokio::spawn({
         let manager = hardware_manager.clone();
         async move {
-            if let Err(e) = hardware::device::device_monitor_loop(
-                manager,
-                Duration::from_millis(10),
-            )
-            .await
+            if let Err(e) =
+                hardware::device::device_monitor_loop(manager, Duration::from_millis(10)).await
             {
                 eprintln!("Hardware monitor loop failed: {}", e);
             }
@@ -75,11 +74,8 @@ async fn main() {
     let hardware_display_task = tokio::spawn({
         let manager = hardware_manager.clone();
         async move {
-            if let Err(e) = hardware::device::device_display_loop(
-                manager,
-                hardware_command_rx,
-            )
-            .await
+            if let Err(e) =
+                hardware::device::device_display_loop(manager, hardware_command_rx).await
             {
                 eprintln!("Hardware display loop failed: {}", e);
             }
@@ -251,7 +247,10 @@ async fn handle_hardware_event(
                 crate::controller::state::PageView::StreamSelection => {
                     // T071: On stream selection page, buttons select streams
                     if button_id < 6 && (button_id as usize) < state.streams.len() {
-                        println!("Hardware event: Button {} pressed - Selecting stream", button_id);
+                        println!(
+                            "Hardware event: Button {} pressed - Selecting stream",
+                            button_id
+                        );
                         state.selected_stream_index = button_id as usize;
 
                         // T074: Mark control command sent for latency tracking
@@ -353,7 +352,10 @@ async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEven
             let (is_valid, elapsed) = state.validate_control_command_latency();
             if let Some(ms) = elapsed {
                 if is_valid {
-                    println!("  Control command feedback latency: {}ms (within 500ms limit)", ms);
+                    println!(
+                        "  Control command feedback latency: {}ms (within 500ms limit)",
+                        ms
+                    );
                 }
             }
 
@@ -363,23 +365,26 @@ async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEven
         }
         // T050: Handle stream changes
         SnapcastEvent::StreamChanged {
-            client_id,
+            group_id,
             stream_id,
         } => {
             println!(
                 "Snapcast event: Stream changed for client '{}' to '{}'",
-                client_id, stream_id
+                group_id, stream_id
             );
 
             // T074: Validate control command latency
             let (is_valid, elapsed) = state.validate_control_command_latency();
             if let Some(ms) = elapsed {
                 if is_valid {
-                    println!("  Control command feedback latency: {}ms (within 500ms limit)", ms);
+                    println!(
+                        "  Control command feedback latency: {}ms (within 500ms limit)",
+                        ms
+                    );
                 }
             }
 
-            let changed = state.handle_stream_changed(&client_id, stream_id);
+            let changed = state.handle_stream_changed(&group_id, stream_id);
 
             changed // T052: Return true if refresh needed
         }

@@ -219,13 +219,8 @@ impl DisplayManager {
         device: &Arc<AsyncAjazz>,
     ) -> Result<(), HardwareError> {
         // Display on button 0 (main status screen)
-        self.display_multiline_status(
-            device,
-            0,
-            &["Waiting for", "hardware..."],
-            14.0,
-        )
-        .await
+        self.display_multiline_status(device, 0, &["Waiting for", "hardware..."], 14.0)
+            .await
     }
 
     /// Display "Connecting to server..." message during connection attempt (T029)
@@ -251,13 +246,8 @@ impl DisplayManager {
         error_type: &str,
     ) -> Result<(), HardwareError> {
         // Display on button 0 (main status screen)
-        self.display_multiline_status(
-            device,
-            0,
-            &["Connection", "Error:", error_type],
-            12.0,
-        )
-        .await
+        self.display_multiline_status(device, 0, &["Connection", "Error:", error_type], 12.0)
+            .await
     }
 
     /// Display room name and connection success on hardware screens (T031)
@@ -267,13 +257,8 @@ impl DisplayManager {
         room_name: &str,
     ) -> Result<(), HardwareError> {
         // Display on button 0 (main status screen)
-        self.display_multiline_status(
-            device,
-            0,
-            &["Connected!", room_name],
-            14.0,
-        )
-        .await
+        self.display_multiline_status(device, 0, &["Connected!", room_name], 14.0)
+            .await
     }
 
     /// Display full status layout with room info
@@ -397,12 +382,21 @@ impl DisplayManager {
         // sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
 
         // Button 1: Stream name (T045)
-        self.render_stream_screen(device, 1, &layout.stream_name).await?;
+        self.render_stream_screen(device, 1, &layout.stream_name)
+            .await?;
         // sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
 
         // Button 2: Volume percentage (T043)
-        self.render_volume_screen(device, 2, layout.volume_display.trim_end_matches('%').parse().unwrap_or(0))
-            .await?;
+        self.render_volume_screen(
+            device,
+            2,
+            layout
+                .volume_display
+                .trim_end_matches('%')
+                .parse()
+                .unwrap_or(0),
+        )
+        .await?;
         // sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
 
         // Button 3: Connection status (T046)
@@ -411,11 +405,13 @@ impl DisplayManager {
         // sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
 
         // Button 4: Server address (T047)
-        self.render_server_screen(device, 4, &layout.server_address).await?;
+        self.render_server_screen(device, 4, &layout.server_address)
+            .await?;
         // sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
 
         // Button 5: Room name (T048)
-        self.render_room_screen(device, 5, &layout.room_name).await?;
+        self.render_room_screen(device, 5, &layout.room_name)
+            .await?;
 
         Ok(())
     }
@@ -658,7 +654,10 @@ pub struct StreamSelectionPageLayout {
 impl StreamSelectionPageLayout {
     /// Create a new stream selection page layout from available streams
     /// T069: Build stream selection page layout data structure
-    pub fn from_streams(streams: &[crate::snapcast::types::AudioStream], selected_index: usize) -> Self {
+    pub fn from_streams(
+        streams: &[crate::snapcast::types::AudioStream],
+        selected_index: usize,
+    ) -> Self {
         let mut stream_names: [Option<String>; 6] = Default::default();
 
         // Fill in up to 6 streams

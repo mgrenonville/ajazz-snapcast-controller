@@ -152,6 +152,7 @@ impl SnapcastClient {
             volume: client.config.volume.percent.min(100) as u8,
             muted: client.config.volume.muted,
             connected: client.connected,
+            group_id: group.id.clone(),
             stream_id: Some(group.value().stream_id.clone()),
             latency: Some(client.config.latency as u32),
         })
@@ -317,10 +318,15 @@ impl SnapcastClient {
             SnapcastResult::GroupSetMute(_, _set_mute_result) => {
                 // Mute is handled via ClientSetVolume notifications
             }
-            SnapcastResult::GroupSetStream(_group_id, result) => {
-                // Stream change acknowledged. The server will send Group.OnStreamChanged
-                // notifications for each client in the group
-                eprintln!("Group stream set to '{}' (waiting for notifications)", result.stream_id);
+            SnapcastResult::GroupSetStream(group_id, group) => {
+                // When stream is set for a group, emit StreamChanged events for each client
+                let stream_id = group.stream_id.clone();
+
+                eprintln!("Group '{}' stream changed to '{}'", group_id, stream_id);
+                let _ = self.event_tx.send(SnapcastEvent::StreamChanged {
+                    group_id: group_id.clone(),
+                    stream_id: stream_id.clone(),
+                });
             }
             SnapcastResult::GroupSetClients(_set_clients_result) => {
                 // Client group assignments not tracked for now
@@ -380,7 +386,7 @@ impl SnapcastClient {
                         // Check if our client is in this group
                         if group.clients.contains(&self.client_id) {
                             let _ = self.event_tx.send(SnapcastEvent::StreamChanged {
-                                client_id: self.client_id.clone(),
+                                group_id: group.id.clone(),
                                 stream_id: params.stream_id,
                             });
                         }
@@ -444,7 +450,7 @@ impl SnapcastClient {
                 });
             }
             Notification::StreamOnProperties { params } => {
-                println!("received stream properties : {:?}", params);    
+                println!("received stream properties : {:?}", params);
             }
             // Other notifications are handled by the library's internal state
             _ => {}
