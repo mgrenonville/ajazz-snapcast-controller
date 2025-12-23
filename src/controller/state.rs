@@ -62,6 +62,9 @@ pub enum PageView {
 
     /// Show amplifier power and source control
     AmplifierControl,
+
+    /// T044: Show amplifier source selection (Phono, CD, Spotify, etc.)
+    SourceSelection,
 }
 
 impl ApplicationState {

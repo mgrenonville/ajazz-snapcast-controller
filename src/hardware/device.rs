@@ -351,6 +351,15 @@ pub async fn device_display_loop(
                                 eprintln!("Failed to update amplifier control page: {}", e);
                             }
                         }
+                        HardwareCommand::UpdateSourceSelectionPage(layout) => {
+                            eprintln!("Update source selection page: {:?}", layout);
+                            if let Err(e) = display_manager
+                                .render_source_selection_page(device, &layout)
+                                .await
+                            {
+                                eprintln!("Failed to update source selection page: {}", e);
+                            }
+                        }
                         HardwareCommand::ShowError(error_msg) => {
                             eprintln!("Showing error: {}", error_msg);
                             if let Err(e) = display_manager.render_error(device, &error_msg).await {

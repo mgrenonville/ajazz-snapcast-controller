@@ -331,6 +331,62 @@ async fn handle_hardware_event(
                             return false;
                         }
                     }
+                    // T051: Button 2 navigates to source selection page
+                    else if button_id == 2 {
+                        println!(
+                            "Hardware event: Button {} pressed - Navigate to source selection",
+                            button_id
+                        );
+                        state.current_page = crate::controller::state::PageView::SourceSelection;
+                        return true;
+                    }
+                }
+                crate::controller::state::PageView::SourceSelection => {
+                    // T045: Buttons 0-4 select amplifier sources
+                    if button_id <= 4 {
+                        // T050: Validate source selection is allowed
+                        if state.can_select_source() {
+                            use crate::homeassistant::AmplifierSource;
+                            let sources = [
+                                AmplifierSource::Phono,
+                                AmplifierSource::CD,
+                                AmplifierSource::Spotify,
+                                AmplifierSource::Source4,
+                                AmplifierSource::Source5,
+                            ];
+
+                            if let Some(source) = sources.get(button_id as usize) {
+                                println!(
+                                    "Hardware event: Button {} pressed - Select source: {}",
+                                    button_id,
+                                    source.display_name()
+                                );
+
+                                // T047: Update local state
+                                state.set_selected_source(*source);
+
+                                // T048: Persist to file
+                                if let Err(e) = state.save_selected_source() {
+                                    eprintln!("Failed to save selected source: {}", e);
+                                }
+
+                                // T046: Send IR command via MQTT
+                                let _ = homeassistant_command_tx.send(
+                                    HomeAssistantCommand::SelectSource { source: *source },
+                                );
+
+                                // T051: Navigate back to amplifier control page
+                                state.current_page =
+                                    crate::controller::state::PageView::AmplifierControl;
+
+                                return true;
+                            }
+                        } else {
+                            // T052: Error handling
+                            eprintln!("Cannot select source: Home Assistant not connected");
+                            return false;
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -498,7 +554,7 @@ fn build_status_layout(state: &ApplicationState) -> Option<StatusPageLayout> {
 
 /// Build appropriate HardwareCommand based on current page view
 fn build_display_command(state: &ApplicationState) -> Option<HardwareCommand> {
-    use crate::hardware::display::StreamSelectionPageLayout;
+    use crate::hardware::display::{SourceSelectionPageLayout, StreamSelectionPageLayout};
 
     match state.current_page {
         crate::controller::state::PageView::Status => {
@@ -529,6 +585,12 @@ fn build_display_command(state: &ApplicationState) -> Option<HardwareCommand> {
                 None, // No error for now
             );
             Some(HardwareCommand::UpdateAmplifierPage(layout))
+        }
+        crate::controller::state::PageView::SourceSelection => {
+            // Build and send source selection page layout
+            let selected_source = state.get_selected_source()?;
+            let layout = SourceSelectionPageLayout::new(selected_source);
+            Some(HardwareCommand::UpdateSourceSelectionPage(layout))
         }
         _ => {
             // Other pages not yet implemented

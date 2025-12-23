@@ -358,6 +358,54 @@ impl DisplayManager {
 
         Ok(())
     }
+
+    /// T042: Render a source button showing source name and selection indicator
+    pub async fn render_source_button(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        button: u8,
+        source: crate::homeassistant::AmplifierSource,
+        is_selected: bool,
+    ) -> Result<(), HardwareError> {
+        let indicator = if is_selected { "✓" } else { "" };
+        let lines = vec![source.display_name(), indicator];
+
+        self.display_multiline_status(device, button, &lines, 12.0)
+            .await
+    }
+
+    /// T043: Render source selection page showing all 5 sources
+    pub async fn render_source_selection_page(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        layout: &SourceSelectionPageLayout,
+    ) -> Result<(), HardwareError> {
+        eprintln!("rendering source selection page: {:?}", layout);
+
+        // Get all available sources
+        use crate::homeassistant::AmplifierSource;
+        let sources = [
+            AmplifierSource::Phono,
+            AmplifierSource::CD,
+            AmplifierSource::Spotify,
+            AmplifierSource::Source4,
+            AmplifierSource::Source5,
+        ];
+
+        // Render buttons 0-4 with sources
+        for (i, source) in sources.iter().enumerate() {
+            let is_selected = *source == layout.selected_source;
+            self.render_source_button(device, i as u8, *source, is_selected)
+                .await?;
+            sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+        }
+
+        // Button 5: Page indicator
+        self.display_status(device, 5, &layout.page_indicator)
+            .await?;
+
+        Ok(())
+    }
 }
 
 /// Status page layout data
@@ -757,6 +805,27 @@ impl AmplifierControlPageLayout {
             error_message: error,
             info_text: "Amplifier".to_string(),
             page_indicator: "Amp".to_string(),
+        }
+    }
+}
+
+/// Source selection page layout data
+/// T041: Layout for amplifier source selection page
+#[derive(Debug, Clone)]
+pub struct SourceSelectionPageLayout {
+    /// Currently selected source (to highlight)
+    pub selected_source: crate::homeassistant::AmplifierSource,
+
+    /// Page indicator text
+    pub page_indicator: String,
+}
+
+impl SourceSelectionPageLayout {
+    /// T041: Create a new source selection page layout
+    pub fn new(selected_source: crate::homeassistant::AmplifierSource) -> Self {
+        Self {
+            selected_source,
+            page_indicator: "Sources".to_string(),
         }
     }
 }

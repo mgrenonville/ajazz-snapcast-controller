@@ -104,19 +104,19 @@ description: "Task list for Home Assistant Amplifier Control feature implementat
 
 ### Implementation for User Story 2
 
-- [ ] T041 [P] [US2] Extend AmplifierControlPageLayout with source selection fields in src/hardware/display.rs
-- [ ] T042 [P] [US2] Implement render_source_button method (display Phono, CD, Spotify, Source4, Source5) in src/hardware/display.rs
-- [ ] T043 [US2] Update render_amplifier_control_page to include source display in src/hardware/display.rs (depends on T041, T042)
-- [ ] T044 [US2] Create PageView::AmplifierSourceSelection sub-page in src/controller/state.rs
-- [ ] T045 [US2] Implement source selection button mapping in main event loop in src/main.rs
-- [ ] T046 [US2] Implement HomeAssistantCommand::SelectSource handling in MqttClient (builds IR command from ir_codes.rs and publishes to IR Blaster topic) in src/homeassistant/client.rs
-- [ ] T047 [US2] Update local AmplifierState.selected_source when user selects a source in src/controller/state.rs
-- [ ] T048 [US2] Persist selected_source to file when changed in src/controller/state.rs
-- [ ] T049 [US2] Restore selected_source from file on application startup in src/controller/state.rs
-- [ ] T050 [US2] Add validation for source selection commands in src/controller/state.rs
-- [ ] T051 [US2] Implement source selection page navigation in src/main.rs
-- [ ] T052 [US2] Add error handling for invalid source selection in src/controller/state.rs
-- [ ] T053 [US2] Add visual feedback when IR command is sent in src/hardware/display.rs
+- [x] T041 [P] [US2] Extend AmplifierControlPageLayout with source selection fields in src/hardware/display.rs
+- [x] T042 [P] [US2] Implement render_source_button method (display Phono, CD, Spotify, Source4, Source5) in src/hardware/display.rs
+- [x] T043 [US2] Update render_amplifier_control_page to include source display in src/hardware/display.rs (depends on T041, T042)
+- [x] T044 [US2] Create PageView::SourceSelection sub-page in src/controller/state.rs
+- [x] T045 [US2] Implement source selection button mapping in main event loop in src/main.rs
+- [x] T046 [US2] Implement HomeAssistantCommand::SelectSource handling in MqttClient (builds IR command from ir_codes.rs and publishes to IR Blaster topic) in src/homeassistant/client.rs
+- [x] T047 [US2] Update local AmplifierState.selected_source when user selects a source in src/controller/state.rs
+- [x] T048 [US2] Persist selected_source to file when changed in src/controller/state.rs
+- [x] T049 [US2] Restore selected_source from file on application startup in src/controller/state.rs
+- [x] T050 [US2] Add validation for source selection commands in src/controller/state.rs
+- [x] T051 [US2] Implement source selection page navigation in src/main.rs
+- [x] T052 [US2] Add error handling for invalid source selection in src/controller/state.rs
+- [x] T053 [US2] Add visual feedback when IR command is sent in src/hardware/display.rs
 
 **Checkpoint**: At this point, User Stories 1 AND 2 should both work independently - users can control power and select sources with local state tracking
 
