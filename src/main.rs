@@ -242,23 +242,54 @@ async fn handle_hardware_event(
         }
         // T065-T066: Knob rotation controls volume (handled in ApplicationState)
         HardwareEvent::KnobRotated { knob_id, delta } => {
-            if let Some((client_id, new_volume)) = state.handle_knob_rotated(knob_id, delta) {
-                println!(
-                    "Hardware event: Knob {} rotated (delta: {}) - Volume: {}%",
-                    knob_id, delta, new_volume
-                );
+            // T055: Handle volume knob based on current page
+            match state.current_page {
+                crate::controller::state::PageView::AmplifierControl
+                | crate::controller::state::PageView::SourceSelection => {
+                    // T055: On amplifier pages, control amplifier volume via IR commands
+                    if knob_id == 1 && state.homeassistant_connected {
+                        // T060: Send appropriate IR command based on delta (positive = up, negative = down)
+                        if delta > 0 {
+                            for _ in 0..delta {
+                                println!(
+                                    "Hardware event: Knob {} rotated up - Amplifier Volume Up",
+                                    knob_id
+                                );
+                                let _ = homeassistant_command_tx.send(HomeAssistantCommand::VolumeUp);
+                            }
+                        } else if delta < 0 {
+                            for _ in 0..delta.abs() {
+                                println!(
+                                    "Hardware event: Knob {} rotated down - Amplifier Volume Down",
+                                    knob_id
+                                );
+                                let _ = homeassistant_command_tx.send(HomeAssistantCommand::VolumeDown);
+                            }
+                        }
+                        return false;
+                    }
+                }
+                _ => {
+                    // On other pages (Status, StreamSelection), control Snapcast volume
+                    if let Some((client_id, new_volume)) = state.handle_knob_rotated(knob_id, delta) {
+                        println!(
+                            "Hardware event: Knob {} rotated (delta: {}) - Snapcast Volume: {}%",
+                            knob_id, delta, new_volume
+                        );
 
-                // T074: Mark control command sent for latency tracking
-                state.mark_control_command_sent();
+                        // T074: Mark control command sent for latency tracking
+                        state.mark_control_command_sent();
 
-                // T066: Send SetVolume command to Snapcast
-                let _ = snapcast_command_tx.send(SnapcastCommand::SetVolume {
-                    client_id,
-                    volume: new_volume,
-                });
+                        // T066: Send SetVolume command to Snapcast
+                        let _ = snapcast_command_tx.send(SnapcastCommand::SetVolume {
+                            client_id,
+                            volume: new_volume,
+                        });
 
-                // State changed, trigger screen refresh
-                return false;
+                        // State changed, trigger screen refresh
+                        return false;
+                    }
+                }
             }
         }
         // T067-T068: Button press handling (depends on current page)

@@ -130,13 +130,13 @@ description: "Task list for Home Assistant Amplifier Control feature implementat
 
 ### Implementation for User Story 3
 
-- [ ] T054 [P] [US3] Add HardwareEvent::VolumeKnobRotated variant in src/hardware/events.rs (if not already exists)
-- [ ] T055 [US3] Implement volume knob event handling in main event loop in src/main.rs
-- [ ] T056 [US3] Implement HomeAssistantCommand::VolumeUp handling in MqttClient (builds IR command with 0xC10 and publishes to IR Blaster topic) in src/homeassistant/client.rs
-- [ ] T057 [US3] Implement HomeAssistantCommand::VolumeDown handling in MqttClient (builds IR command with 0xC11 and publishes to IR Blaster topic) in src/homeassistant/client.rs
-- [ ] T058 [US3] Add rate limiting for volume commands (prevent flooding MQTT with too many commands) in src/homeassistant/client.rs
-- [ ] T059 [US3] Add visual feedback for volume adjustment on display in src/hardware/display.rs
-- [ ] T060 [US3] Handle rapid knob rotation with proper command queuing in src/main.rs
+- [x] T054 [P] [US3] Add HardwareEvent::VolumeKnobRotated variant in src/hardware/events.rs (already exists as KnobRotated)
+- [x] T055 [US3] Implement volume knob event handling in main event loop in src/main.rs
+- [x] T056 [US3] Implement HomeAssistantCommand::VolumeUp handling in MqttClient (builds IR command with 0xC10 and publishes to IR Blaster topic) in src/homeassistant/client.rs
+- [x] T057 [US3] Implement HomeAssistantCommand::VolumeDown handling in MqttClient (builds IR command with 0xC11 and publishes to IR Blaster topic) in src/homeassistant/client.rs
+- [x] T058 [US3] Add rate limiting for volume commands (prevent flooding MQTT with too many commands) in src/homeassistant/client.rs
+- [x] T059 [US3] Add visual feedback for volume adjustment on display in src/hardware/display.rs
+- [x] T060 [US3] Handle rapid knob rotation with proper command queuing in src/main.rs
 
 **Checkpoint**: At this point, User Stories 1, 2, AND 3 should all work independently - users can control power, select sources, and adjust volume
 

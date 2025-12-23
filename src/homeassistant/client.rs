@@ -33,6 +33,9 @@ pub struct MqttClient {
 
     /// Channel to receive commands from main application
     command_rx: mpsc::UnboundedReceiver<HomeAssistantCommand>,
+
+    /// T058: Timestamp of last volume command sent (for rate limiting)
+    last_volume_command: Option<std::time::Instant>,
 }
 
 impl MqttClient {
@@ -74,6 +77,7 @@ impl MqttClient {
             amplifier_state: AmplifierState::new(),
             event_tx,
             command_rx,
+            last_volume_command: None,
         };
 
         (mqtt_client, eventloop)
@@ -346,7 +350,20 @@ impl MqttClient {
     }
 
     /// Send IR command to increase volume
+    /// T058: Implements rate limiting (minimum 100ms between commands)
     async fn send_ir_command_for_volume_up(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // T058: Rate limiting - check if enough time has passed since last command
+        if let Some(last_time) = self.last_volume_command {
+            let elapsed = last_time.elapsed();
+            if elapsed < Duration::from_millis(100) {
+                eprintln!(
+                    "Rate limiting: Skipping volume command ({}ms since last)",
+                    elapsed.as_millis()
+                );
+                return Ok(());
+            }
+        }
+
         let ir_command = commands::build_volume_up_command();
         let payload = ir_command.to_json()?;
 
@@ -359,6 +376,9 @@ impl MqttClient {
             )
             .await?;
 
+        // T058: Update timestamp
+        self.last_volume_command = Some(std::time::Instant::now());
+
         eprintln!(
             "Published IR command to {}: Volume Up ({})",
             self.ir_blaster_topic, payload
@@ -368,7 +388,20 @@ impl MqttClient {
     }
 
     /// Send IR command to decrease volume
+    /// T058: Implements rate limiting (minimum 100ms between commands)
     async fn send_ir_command_for_volume_down(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // T058: Rate limiting - check if enough time has passed since last command
+        if let Some(last_time) = self.last_volume_command {
+            let elapsed = last_time.elapsed();
+            if elapsed < Duration::from_millis(100) {
+                eprintln!(
+                    "Rate limiting: Skipping volume command ({}ms since last)",
+                    elapsed.as_millis()
+                );
+                return Ok(());
+            }
+        }
+
         let ir_command = commands::build_volume_down_command();
         let payload = ir_command.to_json()?;
 
@@ -380,6 +413,9 @@ impl MqttClient {
                 payload.as_bytes(),
             )
             .await?;
+
+        // T058: Update timestamp
+        self.last_volume_command = Some(std::time::Instant::now());
 
         eprintln!(
             "Published IR command to {}: Volume Down ({})",
