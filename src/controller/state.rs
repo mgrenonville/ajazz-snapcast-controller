@@ -321,10 +321,9 @@ impl ApplicationState {
             HomeAssistantEvent::BrokerDisconnected => {
                 self.homeassistant_connected = false;
                 eprintln!("Home Assistant disconnected");
-                // Mark amplifier as unknown
+                // Mark amplifier power as unknown (keep selected_source as it's tracked locally)
                 if let Some(ref mut amplifier) = self.amplifier {
                     amplifier.power_on = None;
-                    amplifier.current_source = None;
                     amplifier.set_availability(crate::homeassistant::types::EntityAvailability::Unknown);
                 }
                 // Refresh screen if on amplifier control page

@@ -8,6 +8,7 @@ use crate::config::settings::{AmplifierPowerEntityConfig, HomeAssistantConfig};
 use super::commands;
 use super::types::{
     AmplifierState, HomeAssistantCommand, HomeAssistantConnection, HomeAssistantEvent,
+    Zigbee2MqttStatePayload,
 };
 
 /// MQTT client for Home Assistant integration and IR Blaster control
@@ -154,7 +155,7 @@ impl MqttClient {
             .ok_or("Invalid power entity ID")?;
 
         // Subscribe to power state topic
-        let power_state_topic = format!("homeassistant/switch/{}/state", power_object_id);
+        let power_state_topic = format!("zigbee2mqtt/{}", power_object_id);
         self.client
             .subscribe(&power_state_topic, QoS::AtLeastOnce)
             .await?;
@@ -179,7 +180,7 @@ impl MqttClient {
         let payload = String::from_utf8_lossy(&publish.payload).to_string();
 
         // Determine which entity this update is for
-        if topic.contains("/state") {
+        if topic.contains("zigbee2mqtt") {
             self.handle_state_update(&topic, &payload).await?;
         } else if topic.contains("/availability") {
             self.handle_availability_update(&topic, &payload).await?;
@@ -194,18 +195,33 @@ impl MqttClient {
         topic: &str,
         payload: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let power_object_id = self
+            .power_entity_config
+            .power_entity
+            .split('.')
+            .nth(1)
+            .ok_or("Invalid power entity ID")?;
+
         // Only handle power state (source is managed locally)
-        if topic.contains("/switch/") {
+        if topic.contains(power_object_id) {
+            // Parse JSON payload from Zigbee2MQTT
+            let parsed: Zigbee2MqttStatePayload = match serde_json::from_str(payload) {
+                Ok(p) => p,
+                Err(e) => {
+                    eprintln!("Failed to parse Zigbee2MQTT payload: {}", e);
+                    eprintln!("Payload: {}", payload);
+                    return Ok(()); // Skip this message
+                }
+            };
+
             // Power state update
-            let power_on = payload.to_uppercase() == "ON";
+            let power_on = parsed.state.to_uppercase() == "ON";
             self.amplifier_state.set_power(power_on);
 
-            let _ = self
-                .event_tx
-                .send(HomeAssistantEvent::EntityStateChanged {
-                    entity_id: self.power_entity_config.power_entity.clone(),
-                    state: payload.to_string(),
-                });
+            let _ = self.event_tx.send(HomeAssistantEvent::EntityStateChanged {
+                entity_id: self.power_entity_config.power_entity.clone(),
+                state: parsed.state,
+            });
         }
 
         Ok(())
@@ -242,12 +258,10 @@ impl MqttClient {
                     Some(false) => true,
                     None => {
                         // Unknown state, cannot toggle
-                        let _ = self
-                            .event_tx
-                            .send(HomeAssistantEvent::CommandFailed {
-                                entity_id: self.power_entity_config.power_entity.clone(),
-                                error: "Power state unknown, cannot toggle".to_string(),
-                            });
+                        let _ = self.event_tx.send(HomeAssistantEvent::CommandFailed {
+                            entity_id: self.power_entity_config.power_entity.clone(),
+                            error: "Power state unknown, cannot toggle".to_string(),
+                        });
                         return Ok(());
                     }
                 };
@@ -288,7 +302,7 @@ impl MqttClient {
             .nth(1)
             .ok_or("Invalid power entity ID")?;
 
-        let topic = format!("homeassistant/switch/{}/set", power_object_id);
+        let topic = format!("zigbee2mqtt/{}/set", power_object_id);
         let payload = if on { "ON" } else { "OFF" };
 
         self.client
@@ -297,11 +311,9 @@ impl MqttClient {
 
         eprintln!("Published to {}: {}", topic, payload);
 
-        let _ = self
-            .event_tx
-            .send(HomeAssistantEvent::CommandAcknowledged {
-                entity_id: self.power_entity_config.power_entity.clone(),
-            });
+        let _ = self.event_tx.send(HomeAssistantEvent::CommandAcknowledged {
+            entity_id: self.power_entity_config.power_entity.clone(),
+        });
 
         Ok(())
     }

@@ -77,20 +77,20 @@ description: "Task list for Home Assistant Amplifier Control feature implementat
 
 ### Implementation for User Story 1
 
-- [ ] T027 [P] [US1] Create AmplifierControlPageLayout struct in src/hardware/display.rs
-- [ ] T028 [P] [US1] Implement render_power_button method in src/hardware/display.rs
-- [ ] T029 [US1] Implement render_amplifier_control_page method in src/hardware/display.rs (depends on T027, T028)
-- [ ] T030 [US1] Add HardwareCommand::UpdateAmplifierPage variant in src/hardware/events.rs
-- [ ] T031 [US1] Implement power button handling in device_display_loop in src/hardware/device.rs
-- [ ] T032 [US1] Add power toggle button mapping in main event loop in src/main.rs
-- [ ] T033 [US1] Implement HomeAssistantCommand::TogglePower handling in MqttClient (sends power toggle to Home Assistant entity) in src/homeassistant/client.rs
-- [ ] T034 [US1] Implement power state subscription in MqttClient::subscribe_to_entities in src/homeassistant/client.rs
-- [ ] T035 [US1] Implement power state change event emission in src/homeassistant/client.rs
-- [ ] T036 [US1] Add validation for power toggle commands in src/controller/state.rs
-- [ ] T037 [US1] Add connection status indicator rendering in src/hardware/display.rs
-- [ ] T038 [US1] Spawn MQTT client task in main.rs event loop
-- [ ] T039 [US1] Route HomeAssistantEvent::PowerStateChanged to ApplicationState in src/main.rs
-- [ ] T040 [US1] Add error display for failed power commands in src/hardware/display.rs
+- [x] T027 [P] [US1] Create AmplifierControlPageLayout struct in src/hardware/display.rs
+- [x] T028 [P] [US1] Implement render_power_button method in src/hardware/display.rs
+- [x] T029 [US1] Implement render_amplifier_control_page method in src/hardware/display.rs (depends on T027, T028)
+- [x] T030 [US1] Add HardwareCommand::UpdateAmplifierPage variant in src/hardware/events.rs
+- [x] T031 [US1] Implement power button handling in device_display_loop in src/hardware/device.rs
+- [x] T032 [US1] Add power toggle button mapping in main event loop in src/main.rs
+- [x] T033 [US1] Implement HomeAssistantCommand::TogglePower handling in MqttClient (sends power toggle to Home Assistant entity) in src/homeassistant/client.rs
+- [x] T034 [US1] Implement power state subscription in MqttClient::subscribe_to_entities in src/homeassistant/client.rs
+- [x] T035 [US1] Implement power state change event emission in src/homeassistant/client.rs
+- [x] T036 [US1] Add validation for power toggle commands in src/controller/state.rs
+- [x] T037 [US1] Add connection status indicator rendering in src/hardware/display.rs
+- [x] T038 [US1] Spawn MQTT client task in main.rs event loop
+- [x] T039 [US1] Route HomeAssistantEvent::PowerStateChanged to ApplicationState in src/main.rs
+- [x] T040 [US1] Add error display for failed power commands in src/hardware/display.rs
 
 **Checkpoint**: At this point, User Story 1 should be fully functional - users can view power state and toggle amplifier power from hardware controller
 
@@ -334,7 +334,7 @@ power_entity = "switch.amplifier_power"  # Home Assistant entity for amplifier p
 
 Before marking this feature complete:
 
-- [ ] Power state displays on hardware controller within 3 seconds
+- [x] Power state displays on hardware controller within 3 seconds
 - [ ] Power toggle command sends IR command via MQTT within 200ms
 - [ ] Power state updates reflect within 2 seconds when changed in Home Assistant
 - [ ] Source selection updates display immediately and sends IR command via MQTT within 200ms

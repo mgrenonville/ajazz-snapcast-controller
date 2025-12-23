@@ -96,6 +96,14 @@ impl IrCommand {
     }
 }
 
+/// Zigbee2MQTT state payload structure
+/// Only deserializes the "state" field, ignoring all other fields
+#[derive(Debug, Deserialize)]
+pub struct Zigbee2MqttStatePayload {
+    /// Device state (e.g., "ON", "OFF")
+    pub state: String,
+}
+
 /// Entity availability status
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EntityAvailability {

@@ -293,6 +293,73 @@ impl DisplayManager {
     }
 }
 
+/// Amplifier control page display helpers
+impl DisplayManager {
+    /// T028: Render power button showing amplifier power state
+    pub async fn render_power_button(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        button: u8,
+        power_on: Option<bool>,
+    ) -> Result<(), HardwareError> {
+        let (_text, lines) = match power_on {
+            Some(true) => ("ON", vec!["Power", "ON"]),
+            Some(false) => ("OFF", vec!["Power", "OFF"]),
+            None => ("?", vec!["Power", "Unknown"]),
+        };
+
+        self.display_multiline_status(device, button, &lines, 14.0)
+            .await
+    }
+
+    /// T029: Render amplifier control page with all button layouts
+    pub async fn render_amplifier_control_page(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        layout: &AmplifierControlPageLayout,
+    ) -> Result<(), HardwareError> {
+        eprintln!("rendering amplifier page: {:?}", layout);
+
+        // Button 0: Power status (T028)
+        let power_on = match layout.power_status.as_str() {
+            "ON" => Some(true),
+            "OFF" => Some(false),
+            _ => None,
+        };
+        self.render_power_button(device, 0, power_on).await?;
+        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+
+        // Button 1: Connection status (T037)
+        let connected = layout.connection_status == "Connected";
+        self.render_connection_screen(device, 1, connected).await?;
+        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+
+        // Button 2: Selected source
+        self.display_multiline_status(device, 2, &["Source:", &layout.selected_source], 12.0)
+            .await?;
+        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+
+        // Button 3: Error or status (T040)
+        if let Some(ref error) = layout.error_message {
+            self.display_multiline_status(device, 3, &["Error:", error], 10.0)
+                .await?;
+        } else {
+            self.display_status(device, 3, "OK").await?;
+        }
+        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+
+        // Button 4: Info text
+        self.display_status(device, 4, &layout.info_text).await?;
+        sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
+
+        // Button 5: Page indicator
+        self.display_status(device, 5, &layout.page_indicator)
+            .await?;
+
+        Ok(())
+    }
+}
+
 /// Status page layout data
 /// T042: Screen layout for status page displaying room state across 6 button screens
 #[derive(Debug, Clone)]
@@ -637,6 +704,60 @@ impl DisplayManager {
         }
 
         Ok(())
+    }
+}
+
+/// Amplifier control page layout data
+/// T027: Screen layout for amplifier control page
+#[derive(Debug, Clone)]
+pub struct AmplifierControlPageLayout {
+    /// Amplifier power status (button 0)
+    pub power_status: String,
+
+    /// Connection status to Home Assistant (button 1)
+    pub connection_status: String,
+
+    /// Currently selected source (button 2)
+    pub selected_source: String,
+
+    /// Error message if any (button 3)
+    pub error_message: Option<String>,
+
+    /// Info/help text (button 4)
+    pub info_text: String,
+
+    /// Page indicator (button 5)
+    pub page_indicator: String,
+}
+
+impl AmplifierControlPageLayout {
+    /// Create a new amplifier control page layout
+    pub fn new(
+        power_on: Option<bool>,
+        connected: bool,
+        selected_source: &str,
+        error: Option<String>,
+    ) -> Self {
+        let power_status = match power_on {
+            Some(true) => "ON".to_string(),
+            Some(false) => "OFF".to_string(),
+            None => "Unknown".to_string(),
+        };
+
+        let connection_status = if connected {
+            "Connected".to_string()
+        } else {
+            "Disconnected".to_string()
+        };
+
+        Self {
+            power_status,
+            connection_status,
+            selected_source: selected_source.to_string(),
+            error_message: error,
+            info_text: "Amplifier".to_string(),
+            page_indicator: "Amp".to_string(),
+        }
     }
 }
 

@@ -11,9 +11,10 @@ use crate::config::settings::ConnectionSettings;
 use crate::controller::state::ApplicationState;
 use crate::hardware::{
     device::DeviceManager,
-    display::StatusPageLayout,
+    display::{AmplifierControlPageLayout, StatusPageLayout},
     events::{HardwareCommand, HardwareEvent},
 };
+use crate::homeassistant::types::{HomeAssistantCommand, HomeAssistantEvent};
 use crate::snapcast::{
     client::SnapcastClient,
     types::{SnapcastCommand, SnapcastEvent},
@@ -44,10 +45,14 @@ async fn main() {
     // Create event channels
     let (hardware_event_tx, mut hardware_event_rx) = unbounded_channel::<HardwareEvent>();
     let (snapcast_event_tx, mut snapcast_event_rx) = unbounded_channel::<SnapcastEvent>();
+    let (homeassistant_event_tx, mut homeassistant_event_rx) =
+        unbounded_channel::<HomeAssistantEvent>();
     // Watch channel for screen updates - always holds latest state, drops old updates
     let (hardware_command_tx, hardware_command_rx) =
         watch::channel::<Option<HardwareCommand>>(None);
     let (snapcast_command_tx, snapcast_command_rx) = unbounded_channel::<SnapcastCommand>();
+    let (homeassistant_command_tx, homeassistant_command_rx) =
+        unbounded_channel::<HomeAssistantCommand>();
 
     // Parse server address
     let server_addr = format!("{}:{}", config.server.address, config.server.port)
@@ -101,6 +106,27 @@ async fn main() {
         .await;
     };
 
+    // T038: Create Home Assistant MQTT client task (if configured)
+    let _homeassistant_task = if let Some(ref ha_config) = config.homeassistant {
+        let (mqtt_client, eventloop) = homeassistant::client::MqttClient::new(
+            ha_config.clone(),
+            homeassistant_event_tx,
+            homeassistant_command_rx,
+        );
+
+        // Load persisted amplifier state
+        if let Err(e) = app_state.load_selected_source() {
+            eprintln!("Failed to load amplifier state: {}", e);
+        }
+
+        Some(tokio::spawn(async move {
+            mqtt_client.run(eventloop).await;
+        }))
+    } else {
+        eprintln!("Home Assistant not configured, skipping MQTT client");
+        None
+    };
+
     // T032: Implement main event loop
     println!("Starting main event loop...");
 
@@ -111,7 +137,7 @@ async fn main() {
         tokio::select! {
             // Process hardware events
             Some(hw_event) = hardware_event_rx.recv() => {
-                let needs_refresh = handle_hardware_event(&mut app_state, hw_event, &hardware_command_tx, &snapcast_command_tx).await;
+                let needs_refresh = handle_hardware_event(&mut app_state, hw_event, &hardware_command_tx, &snapcast_command_tx, &homeassistant_command_tx).await;
 
                 // Trigger screen refresh if hardware just connected and we have state
                 if needs_refresh && app_state.needs_screen_refresh() {
@@ -155,6 +181,19 @@ async fn main() {
                 }
             }
 
+            // T039: Process Home Assistant events
+            Some(ha_event) = homeassistant_event_rx.recv() => {
+                let needs_refresh = app_state.handle_homeassistant_event(ha_event);
+
+                // Trigger screen refresh if on amplifier control page
+                if needs_refresh && app_state.hardware_connected {
+                    if let Some(command) = build_display_command(&app_state) {
+                        let _ = hardware_command_tx.send(Some(command));
+                        app_state.mark_screen_update_completed();
+                    }
+                }
+            }
+
             // Run Snapcast message loop (non-blocking poll)
             _ = &mut snapcast_task => {
                 eprintln!("Snapcast task ended unexpectedly");
@@ -181,6 +220,7 @@ async fn handle_hardware_event(
     event: HardwareEvent,
     _hardware_command_tx: &watch::Sender<Option<HardwareCommand>>,
     snapcast_command_tx: &tokio::sync::mpsc::UnboundedSender<SnapcastCommand>,
+    homeassistant_command_tx: &tokio::sync::mpsc::UnboundedSender<HomeAssistantCommand>,
 ) -> bool {
     println!("Handle hardware event: {:?}", event);
     match event {
@@ -272,6 +312,26 @@ async fn handle_hardware_event(
                         return true;
                     }
                 }
+                crate::controller::state::PageView::AmplifierControl => {
+                    // T032: On amplifier control page, button 0 toggles power
+                    if button_id == 0 {
+                        // T036: Validate power toggle is allowed
+                        if state.can_toggle_power() {
+                            println!(
+                                "Hardware event: Button {} pressed - Toggle amplifier power",
+                                button_id
+                            );
+
+                            let _ =
+                                homeassistant_command_tx.send(HomeAssistantCommand::TogglePower);
+
+                            return false;
+                        } else {
+                            eprintln!("Cannot toggle power: not connected or state unknown");
+                            return false;
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -287,6 +347,11 @@ async fn handle_hardware_event(
                 1 => {
                     // Page button 1: Stream selection page
                     state.current_page = crate::controller::state::PageView::StreamSelection;
+                    return true;
+                }
+                2 => {
+                    // Page button 1: Stream selection page
+                    state.current_page = crate::controller::state::PageView::AmplifierControl;
                     return true;
                 }
                 _ => {}
@@ -448,6 +513,22 @@ fn build_display_command(state: &ApplicationState) -> Option<HardwareCommand> {
                 state.selected_stream_index,
             );
             Some(HardwareCommand::UpdateStreamSelectionPage(layout))
+        }
+        crate::controller::state::PageView::AmplifierControl => {
+            // Build and send amplifier control page layout
+            let amplifier_state = state.get_amplifier_state()?;
+            let selected_source = state
+                .get_selected_source()
+                .map(|s| s.display_name())
+                .unwrap_or("Unknown");
+
+            let layout = AmplifierControlPageLayout::new(
+                amplifier_state.power_on,
+                state.homeassistant_connected,
+                selected_source,
+                None, // No error for now
+            );
+            Some(HardwareCommand::UpdateAmplifierPage(layout))
         }
         _ => {
             // Other pages not yet implemented
