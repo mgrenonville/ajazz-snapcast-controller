@@ -18,6 +18,9 @@ pub struct RoomState {
     /// Whether client is connected to server
     pub connected: bool,
 
+    /// Currently assigned group ID
+    pub group_id: String,
+
     /// Currently assigned audio stream ID
     pub stream_id: Option<String>,
 
@@ -84,10 +87,7 @@ pub enum SnapcastEvent {
     ClientDisconnected { client_id: String },
 
     /// Client assigned to different stream
-    StreamChanged {
-        client_id: String,
-        stream_id: String,
-    },
+    StreamChanged { group_id: String, stream_id: String },
 
     /// Stream metadata or status updated (T051)
     StreamUpdate {
@@ -102,5 +102,21 @@ pub enum SnapcastEvent {
     ServerReconnected {
         room: Option<RoomState>,
         streams: Vec<AudioStream>,
+    },
+}
+
+/// Commands to send to Snapcast server
+#[derive(Debug, Clone)]
+pub enum SnapcastCommand {
+    /// Set volume for a client (0-100)
+    SetVolume { client_id: String, volume: u8 },
+
+    /// Set mute status for a client
+    SetMuted { client_id: String, muted: bool },
+
+    /// Change stream for a client
+    SetStream {
+        client_id: String,
+        stream_id: String,
     },
 }

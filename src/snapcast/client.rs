@@ -1,9 +1,13 @@
 // Snapcast client - TCP connection and communication with Snapcast server
 
-use crate::snapcast::{SnapcastError, types::SnapcastEvent};
+use crate::snapcast::{
+    SnapcastError,
+    types::{SnapcastCommand, SnapcastEvent},
+};
 use snapcast_control::{ClientError, SnapcastConnection};
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 /// Snapcast server connection manager
 pub struct SnapcastClient {
@@ -86,7 +90,7 @@ impl SnapcastClient {
                     break;
                 }
                 Err(e) => {
-                    eprintln!("Failed to connect to Snapcast server: {}", e);
+                    warn!("Failed to connect to Snapcast server: {}", e);
                     tokio::time::sleep(retry_interval).await;
                 }
             }
@@ -130,7 +134,10 @@ impl SnapcastClient {
     pub fn get_room_state(&self, client_id: &str) -> Option<crate::snapcast::types::RoomState> {
         let connection = self.connection.as_ref()?;
 
-        println!("clients: {}", connection.state.clients.len());
+        debug!(
+            "Snapcast clients connected: {}",
+            connection.state.clients.len()
+        );
 
         // Get client info from state
         let client = connection.state.clients.get(client_id)?;
@@ -149,6 +156,7 @@ impl SnapcastClient {
             volume: client.config.volume.percent.min(100) as u8,
             muted: client.config.volume.muted,
             connected: client.connected,
+            group_id: group.id.clone(),
             stream_id: Some(group.value().stream_id.clone()),
             latency: Some(client.config.latency as u32),
         })
@@ -228,6 +236,7 @@ impl SnapcastClient {
             muted,
         };
 
+        info!("Snapcast: Set volume to {}%", volume);
         connection
             .client_set_volume(client_id, volume_params)
             .await
@@ -266,10 +275,12 @@ impl SnapcastClient {
 
         match connection.recv().await {
             Some(Ok(message)) => {
-                // Check if this is a notification we care about
-                if let ValidMessage::Notification { method, .. } = message {
-                    self.handle_notification(*method);
+                match message {
+                    // Check if this is a notification we care about
+                    ValidMessage::Notification { method, .. } => self.handle_notification(*method),
+                    ValidMessage::Result { result, .. } => self.handle_result(*result),
                 }
+
                 // The snapcast_control library handles state updates automatically
                 Ok(Some(()))
             }
@@ -281,6 +292,75 @@ impl SnapcastClient {
                 // Connection closed
                 self.handle_disconnection();
                 Ok(None)
+            }
+        }
+    }
+
+    fn handle_result(&self, result: snapcast_control::SnapcastResult) {
+        use snapcast_control::SnapcastResult;
+        match result {
+            SnapcastResult::ClientGetStatus(_get_status_result) => todo!(),
+            SnapcastResult::ClientSetVolume(id, params) => {
+                let volume = params.volume.percent.min(100) as u8;
+                let muted = params.volume.muted;
+
+                let _ = self.event_tx.send(SnapcastEvent::ClientVolumeChanged {
+                    client_id: id,
+                    volume,
+                    muted,
+                });
+            }
+            SnapcastResult::ClientSetLatency(_, _set_latency_result) => {
+                // Latency changes not tracked for now
+            }
+            SnapcastResult::ClientSetName(_, _set_name_result) => {
+                // Name changes not tracked for now
+            }
+            SnapcastResult::GroupGetStatus(_get_status_result) => {
+                // Group status queries not tracked for now
+            }
+            SnapcastResult::GroupSetMute(_, _set_mute_result) => {
+                // Mute is handled via ClientSetVolume notifications
+            }
+            SnapcastResult::GroupSetStream(group_id, group) => {
+                // When stream is set for a group, emit StreamChanged events for each client
+                let stream_id = group.stream_id.clone();
+
+                info!(
+                    "Snapcast: Group '{}' stream changed to '{}'",
+                    group_id, stream_id
+                );
+                let _ = self.event_tx.send(SnapcastEvent::StreamChanged {
+                    group_id: group_id.clone(),
+                    stream_id: stream_id.clone(),
+                });
+            }
+            SnapcastResult::GroupSetClients(_set_clients_result) => {
+                // Client group assignments not tracked for now
+            }
+            SnapcastResult::GroupSetName(_, _set_name_result) => {
+                // Group name changes not tracked for now
+            }
+            SnapcastResult::ServerGetRPCVersion(_get_rpc_version_result) => {
+                // RPC version queries not tracked for now
+            }
+            SnapcastResult::ServerGetStatus(_get_status_result) => {
+                // Server status is handled via initial connection
+            }
+            SnapcastResult::ServerDeleteClient(_delete_client_result) => {
+                // Client deletion not tracked for now
+            }
+            SnapcastResult::StreamAddStream(_add_stream_result) => {
+                // Stream additions not tracked for now
+            }
+            SnapcastResult::StreamRemoveStream(_remove_stream_result) => {
+                // Stream removals not tracked for now
+            }
+            SnapcastResult::StreamControl(_) => {
+                // Stream control commands not tracked for now
+            }
+            SnapcastResult::StreamSetProperty(_) => {
+                // Stream property changes not tracked for now
             }
         }
     }
@@ -308,15 +388,15 @@ impl SnapcastClient {
             // For now, we'll check if our client is in this group
             Notification::GroupOnStreamChanged { params } => {
                 // Check if our client is in this group
-                if let Some(connection) = &self.connection {
-                    if let Some(group) = connection.state.groups.get(&params.id) {
-                        // Check if our client is in this group
-                        if group.clients.contains(&self.client_id) {
-                            let _ = self.event_tx.send(SnapcastEvent::StreamChanged {
-                                client_id: self.client_id.clone(),
-                                stream_id: params.stream_id,
-                            });
-                        }
+                if let Some(connection) = &self.connection
+                    && let Some(group) = connection.state.groups.get(&params.id)
+                {
+                    // Check if our client is in this group
+                    if group.clients.contains(&self.client_id) {
+                        let _ = self.event_tx.send(SnapcastEvent::StreamChanged {
+                            group_id: group.id.clone(),
+                            stream_id: params.stream_id,
+                        });
                     }
                 }
             }
@@ -327,48 +407,47 @@ impl SnapcastClient {
                 // We also emit an event so the application can update its cached stream data
 
                 // Get the updated stream from the connection state
-                if let Some(connection) = &self.connection {
-                    if let Some(stream_entry) = connection.state.streams.get(&params.id) {
-                        if let Some(stream) = stream_entry.value().as_ref() {
-                            // Convert to our AudioStream type
-                            let status = match stream.status {
-                                snapcast_control::stream::StreamStatus::Playing => {
-                                    crate::snapcast::types::StreamStatus::Playing
-                                }
-                                snapcast_control::stream::StreamStatus::Idle => {
-                                    crate::snapcast::types::StreamStatus::Idle
-                                }
-                                _ => crate::snapcast::types::StreamStatus::Unknown,
-                            };
-
-                            let name = stream
-                                .uri
-                                .query
-                                .get("name")
-                                .cloned()
-                                .unwrap_or_else(|| stream.uri.path.clone());
-
-                            let audio_stream = crate::snapcast::types::AudioStream {
-                                stream_id: stream.id.clone(),
-                                name,
-                                status,
-                                metadata: None, // Metadata fields are private
-                            };
-
-                            let _ = self.event_tx.send(SnapcastEvent::StreamUpdate {
-                                stream_id: params.id.clone(),
-                                stream: audio_stream,
-                            });
+                if let Some(connection) = &self.connection
+                    && let Some(stream_entry) = connection.state.streams.get(&params.id)
+                    && let Some(stream) = stream_entry.value().as_ref()
+                {
+                    // Convert to our AudioStream type
+                    let status = match stream.status {
+                        snapcast_control::stream::StreamStatus::Playing => {
+                            crate::snapcast::types::StreamStatus::Playing
                         }
-                    }
+                        snapcast_control::stream::StreamStatus::Idle => {
+                            crate::snapcast::types::StreamStatus::Idle
+                        }
+                        _ => crate::snapcast::types::StreamStatus::Unknown,
+                    };
+
+                    let name = stream
+                        .uri
+                        .query
+                        .get("name")
+                        .cloned()
+                        .unwrap_or_else(|| stream.uri.path.clone());
+
+                    let audio_stream = crate::snapcast::types::AudioStream {
+                        stream_id: stream.id.clone(),
+                        name,
+                        status,
+                        metadata: None, // Metadata fields are private
+                    };
+
+                    let _ = self.event_tx.send(SnapcastEvent::StreamUpdate {
+                        stream_id: params.id.clone(),
+                        stream: audio_stream,
+                    });
                 }
             }
 
             // Client connection events
             Notification::ClientOnConnect { params } => {
-                let _ = self
-                    .event_tx
-                    .send(SnapcastEvent::ClientConnected { client_id: params.id });
+                let _ = self.event_tx.send(SnapcastEvent::ClientConnected {
+                    client_id: params.id,
+                });
             }
 
             Notification::ClientOnDisconnect { params } => {
@@ -376,7 +455,9 @@ impl SnapcastClient {
                     client_id: params.id,
                 });
             }
-
+            Notification::StreamOnProperties { params } => {
+                debug!("Snapcast: Received stream properties: {:?}", params);
+            }
             // Other notifications are handled by the library's internal state
             _ => {}
         }
@@ -422,7 +503,7 @@ impl ConnectionHandler {
     /// Wait for connection with exponential backoff
     async fn ensure_connected(&mut self) {
         // T029: Display connecting message
-        println!("Connecting to server...");
+        info!("Connecting to Snapcast server...");
 
         while !self.client.is_connected() {
             match self.try_connect().await {
@@ -430,7 +511,7 @@ impl ConnectionHandler {
                     // Request initial server status after connection
                     if let Err(e) = self.client.get_server_status().await {
                         // T030: Display connection error
-                        eprintln!("Connection Error: Failed to get server status: {}", e);
+                        error!("Failed to get Snapcast server status: {}", e);
                         self.client.handle_disconnection();
                         tokio::time::sleep(self.current_retry_interval).await;
                         continue;
@@ -438,13 +519,13 @@ impl ConnectionHandler {
 
                     // T031 & T037: Emit ServerReconnected event with room state
                     self.client.emit_server_reconnected();
-                    println!("Connected to Snapcast server successfully");
+                    info!("Connected to Snapcast server successfully");
                     break;
                 }
                 Err(e) => {
                     // T030: Display connection error
-                    eprintln!(
-                        "Connection Error: {}, retrying in {:?}",
+                    warn!(
+                        "Snapcast connection failed: {}, retrying in {:?}",
                         e, self.current_retry_interval
                     );
                     tokio::time::sleep(self.current_retry_interval).await;
@@ -453,8 +534,11 @@ impl ConnectionHandler {
         }
     }
 
-    /// Handle connection/disconnection events and reconnection
-    pub async fn handle_connection_lifecycle(&mut self) -> Result<(), SnapcastError> {
+    /// Handle connection/disconnection events, reconnection, and commands
+    pub async fn handle_connection_lifecycle(
+        &mut self,
+        command_rx: &mut mpsc::UnboundedReceiver<SnapcastCommand>,
+    ) -> Result<(), SnapcastError> {
         // Initial connection
         self.ensure_connected().await;
 
@@ -464,21 +548,96 @@ impl ConnectionHandler {
                 self.ensure_connected().await;
             }
 
-            // Receive and process messages
-            match self.client.receive_message().await {
-                Ok(Some(())) => {
-                    // Message processed successfully
-                    continue;
+            tokio::select! {
+                // Receive and process server messages
+                result = self.client.receive_message() => {
+                    match result {
+                        Ok(Some(())) => {
+                            // Message processed successfully
+                            continue;
+                        }
+                        Ok(None) => {
+                            // Connection closed, will reconnect on next iteration
+                            warn!("Snapcast server connection closed");
+                            continue;
+                        }
+                        Err(e) => {
+                            error!("Error receiving Snapcast message: {}", e);
+                            self.client.handle_disconnection();
+                            // Will reconnect on next iteration
+                        }
+                    }
                 }
-                Ok(None) => {
-                    // Connection closed, will reconnect on next iteration
-                    eprintln!("Server connection closed");
-                    continue;
+
+                // Handle commands from main event loop
+                Some(command) = command_rx.recv() => {
+                    if let Err(e) = self.handle_command(command).await {
+                        error!("Error executing Snapcast command: {}", e);
+                    }
                 }
-                Err(e) => {
-                    eprintln!("Error receiving message: {}", e);
-                    self.client.handle_disconnection();
-                    // Will reconnect on next iteration
+            }
+        }
+    }
+
+    /// Execute a command on the Snapcast server
+    async fn handle_command(&mut self, command: SnapcastCommand) -> Result<(), SnapcastError> {
+        match command {
+            SnapcastCommand::SetVolume { client_id, volume } => {
+                // Get current muted status from state
+                let muted = if let Some(conn) = &self.client.connection {
+                    conn.state
+                        .clients
+                        .get(&client_id)
+                        .map(|c| c.config.volume.muted)
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+
+                self.client
+                    .set_client_volume(client_id, volume, muted)
+                    .await
+            }
+            SnapcastCommand::SetMuted { client_id, muted } => {
+                // Get current volume from state
+                let volume = if let Some(conn) = &self.client.connection {
+                    conn.state
+                        .clients
+                        .get(&client_id)
+                        .map(|c| c.config.volume.percent.min(100) as u8)
+                        .unwrap_or(50)
+                } else {
+                    50
+                };
+
+                self.client
+                    .set_client_volume(client_id, volume, muted)
+                    .await
+            }
+            SnapcastCommand::SetStream {
+                client_id,
+                stream_id,
+            } => {
+                // Find which group this client belongs to
+                let group_id = if let Some(conn) = &self.client.connection {
+                    let mut found_group_id = None;
+                    for entry in &conn.state.groups {
+                        if entry.value().clients.contains(&client_id) {
+                            found_group_id = Some(entry.key().clone());
+                            break;
+                        }
+                    }
+                    found_group_id
+                } else {
+                    None
+                };
+
+                if let Some(gid) = group_id {
+                    self.client.set_group_stream(gid, stream_id).await
+                } else {
+                    Err(SnapcastError::RpcError(
+                        "Client not found in any group".to_string(),
+                    ))
                 }
             }
         }
@@ -495,12 +654,13 @@ impl ConnectionHandler {
     }
 }
 
-/// Message loop for receiving Snapcast server events
+/// Message loop for receiving Snapcast server events and handling commands
 /// This is a convenience function that creates a ConnectionHandler and runs it
 pub async fn message_loop(
     client: SnapcastClient,
     reconnect_interval: std::time::Duration,
+    mut command_rx: mpsc::UnboundedReceiver<SnapcastCommand>,
 ) -> Result<(), SnapcastError> {
     let mut handler = ConnectionHandler::new(client, reconnect_interval);
-    handler.handle_connection_lifecycle().await
+    handler.handle_connection_lifecycle(&mut command_rx).await
 }

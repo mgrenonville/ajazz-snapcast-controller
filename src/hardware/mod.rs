@@ -4,8 +4,8 @@ use ajazz_sdk::AjazzError;
 use thiserror::Error;
 
 pub mod device;
-pub mod events;
 pub mod display;
+pub mod events;
 
 /// Hardware-related errors
 #[derive(Debug, Error)]
@@ -31,7 +31,6 @@ pub enum HardwareError {
 
 impl From<AjazzError> for HardwareError {
     fn from(value: AjazzError) -> Self {
-
         Self::SdkError(value.to_string())
     }
 }
