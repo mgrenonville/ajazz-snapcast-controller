@@ -150,14 +150,14 @@ description: "Task list for Home Assistant Amplifier Control feature implementat
 
 ### Implementation for User Story 4
 
-- [ ] T061 [P] [US4] Update page button mapping to include AmplifierControl in src/main.rs
-- [ ] T062 [US4] Implement page cycling logic for HardwareEvent::PageButtonPressed in src/main.rs
-- [ ] T063 [US4] Add ApplicationState::next_page method in src/controller/state.rs
-- [ ] T064 [US4] Add ApplicationState::previous_page method in src/controller/state.rs
-- [ ] T065 [US4] Ensure display refreshes on page change in src/main.rs
-- [ ] T066 [US4] Add page indicator to all page layouts in src/hardware/display.rs
-- [ ] T067 [US4] Update device_display_loop to handle all page types in src/hardware/device.rs
-- [ ] T068 [US4] Test concurrent state updates across pages in src/main.rs
+- [x] T061 [P] [US4] Update page button mapping to include AmplifierControl in src/main.rs
+- [x] T062 [US4] Implement page cycling logic for HardwareEvent::PageButtonPressed in src/main.rs
+- [x] T063 [US4] Add ApplicationState::next_page method in src/controller/state.rs
+- [x] T064 [US4] Add ApplicationState::previous_page method in src/controller/state.rs
+- [x] T065 [US4] Ensure display refreshes on page change in src/main.rs
+- [x] T066 [US4] Add page indicator to all page layouts in src/hardware/display.rs
+- [x] T067 [US4] Update device_display_loop to handle all page types in src/hardware/device.rs
+- [x] T068 [US4] Test concurrent state updates across pages in src/main.rs
 
 **Checkpoint**: All user stories should now be independently functional - users can navigate seamlessly between Snapcast and amplifier controls
 
@@ -170,14 +170,14 @@ description: "Task list for Home Assistant Amplifier Control feature implementat
 - [ ] T069 [P] Add command queuing for offline MQTT connection in src/homeassistant/client.rs
 - [ ] T070 [P] Implement command timeout detection (5 second threshold) in src/homeassistant/client.rs
 - [ ] T071 [P] Add connection health monitoring with keep-alive in src/homeassistant/client.rs
-- [ ] T072 [P] Add logging for all MQTT events with tracing/log crate in src/homeassistant/client.rs
+- [x] T072 [P] Add logging for all MQTT events with tracing/log crate in src/homeassistant/client.rs
 - [ ] T073 [P] Optimize display refresh rate to avoid unnecessary renders in src/hardware/device.rs
 - [ ] T074 [P] Add graceful shutdown for MQTT client in src/homeassistant/client.rs
 - [ ] T075 [P] Validate config file format on startup (check ir_blaster_topic is set) in src/config/settings.rs
 - [ ] T076 Code cleanup and remove debug print statements across all files
-- [ ] T077 Run cargo clippy and fix all warnings
-- [ ] T078 Update CLAUDE.md with Home Assistant integration patterns (IR Blaster, local state)
-- [ ] T079 Validate quickstart.md steps match actual implementation
+- [x] T077 Run cargo clippy and fix all warnings
+- [x] T078 Update CLAUDE.md with Home Assistant integration patterns (IR Blaster, local state)
+- [x] T079 Validate quickstart.md steps match actual implementation
 
 ---
 

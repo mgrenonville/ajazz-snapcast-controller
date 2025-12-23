@@ -1,7 +1,7 @@
-/// RC5 IR protocol codes for amplifier control
-///
-/// These codes are sent via MQTT to a Tasmota IR Blaster device
-/// Format: RC5 protocol, 12 bits
+//! RC5 IR protocol codes for amplifier control
+//!
+//! These codes are sent via MQTT to a Tasmota IR Blaster device
+//! Format: RC5 protocol, 12 bits
 
 /// IR codes for amplifier input source selection
 pub mod sources {

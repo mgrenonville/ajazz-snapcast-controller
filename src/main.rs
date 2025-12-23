@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use tokio::sync::{mpsc::unbounded_channel, watch};
+use tracing::{debug, error, info, warn};
 
 use crate::config::settings::ConnectionSettings;
 use crate::controller::state::ApplicationState;
@@ -28,16 +29,24 @@ mod snapcast;
 
 #[tokio::main]
 async fn main() {
-    println!("Snapcast Controller Application");
-    println!("Initialization in progress...");
+    // Initialize tracing subscriber for structured logging
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::from_default_env()
+                .add_directive(tracing::Level::INFO.into()),
+        )
+        .init();
+
+    info!("Snapcast Controller Application");
+    info!("Initialization in progress...");
 
     // Load configuration (T024)
     let config_path = get_config_path();
     let config = load_config(&config_path);
 
-    println!("Configuration loaded successfully");
-    println!("  Server: {}:{}", config.server.address, config.server.port);
-    println!("  Room client ID: {}", config.room.client_id);
+    info!("Configuration loaded successfully");
+    info!("  Server: {}:{}", config.server.address, config.server.port);
+    info!("  Room client ID: {}", config.room.client_id);
 
     // T035: Initialize ApplicationState with loaded config
     let mut app_state = ApplicationState::new(config.clone());
@@ -71,7 +80,7 @@ async fn main() {
             if let Err(e) =
                 hardware::device::device_monitor_loop(manager, Duration::from_millis(10)).await
             {
-                eprintln!("Hardware monitor loop failed: {}", e);
+                error!("Hardware monitor loop failed: {}", e);
             }
         }
     });
@@ -83,7 +92,7 @@ async fn main() {
             if let Err(e) =
                 hardware::device::device_display_loop(manager, hardware_command_rx).await
             {
-                eprintln!("Hardware display loop failed: {}", e);
+                error!("Hardware display loop failed: {}", e);
             }
         }
     });
@@ -116,19 +125,19 @@ async fn main() {
 
         // Load persisted amplifier state
         if let Err(e) = app_state.load_selected_source() {
-            eprintln!("Failed to load amplifier state: {}", e);
+            warn!("Failed to load amplifier state: {}", e);
         }
 
         Some(tokio::spawn(async move {
             mqtt_client.run(eventloop).await;
         }))
     } else {
-        eprintln!("Home Assistant not configured, skipping MQTT client");
+        info!("Home Assistant not configured, skipping MQTT client");
         None
     };
 
     // T032: Implement main event loop
-    println!("Starting main event loop...");
+    info!("Starting main event loop...");
 
     // Pin the snapcast task so we can poll it
     tokio::pin!(snapcast_task);
@@ -140,13 +149,12 @@ async fn main() {
                 let needs_refresh = handle_hardware_event(&mut app_state, hw_event, &hardware_command_tx, &snapcast_command_tx, &homeassistant_command_tx).await;
 
                 // Trigger screen refresh if hardware just connected and we have state
-                if needs_refresh && app_state.needs_screen_refresh() {
-                    if let Some(command) = build_display_command(&app_state) {
+                if needs_refresh && app_state.needs_screen_refresh()
+                    && let Some(command) = build_display_command(&app_state) {
                         // Send always succeeds, overwrites any pending update with latest state
                         let _ = hardware_command_tx.send(Some(command));
                         app_state.mark_screen_update_completed();
                     }
-                }
             }
 
             // Process Snapcast events
@@ -157,9 +165,9 @@ async fn main() {
                 if needs_refresh && app_state.needs_screen_refresh() {
                     // T054: Track time since state change for latency validation
                     if let Some(elapsed_ms) = app_state.time_since_state_change() {
-                        println!("  Triggering screen refresh ({}ms since state change)", elapsed_ms);
+                        debug!("Triggering screen refresh ({}ms since state change)", elapsed_ms);
                     } else {
-                        println!("  Triggering screen refresh");
+                        debug!("Triggering screen refresh");
                     }
 
                     // Send display update command to hardware task
@@ -172,11 +180,10 @@ async fn main() {
 
                         // Validate latency
                         let (is_valid, elapsed) = app_state.validate_screen_update_latency();
-                        if let Some(ms) = elapsed {
-                            if is_valid {
-                                println!("  Screen update latency: {}ms (within 2s limit)", ms);
+                        if let Some(ms) = elapsed
+                            && is_valid {
+                                debug!("Screen update latency: {}ms (within 2s limit)", ms);
                             }
-                        }
                     }
                 }
             }
@@ -186,22 +193,21 @@ async fn main() {
                 let needs_refresh = app_state.handle_homeassistant_event(ha_event);
 
                 // Trigger screen refresh if on amplifier control page
-                if needs_refresh && app_state.hardware_connected {
-                    if let Some(command) = build_display_command(&app_state) {
+                if needs_refresh && app_state.hardware_connected
+                    && let Some(command) = build_display_command(&app_state) {
                         let _ = hardware_command_tx.send(Some(command));
                         app_state.mark_screen_update_completed();
                     }
-                }
             }
 
             // Run Snapcast message loop (non-blocking poll)
             _ = &mut snapcast_task => {
-                eprintln!("Snapcast task ended unexpectedly");
+                error!("Snapcast task ended unexpectedly");
             }
 
             // Handle Ctrl+C gracefully
             _ = tokio::signal::ctrl_c() => {
-                println!("\nShutting down...");
+                info!("Shutting down...");
                 break;
             }
         }
@@ -211,7 +217,7 @@ async fn main() {
     hardware_monitor_task.abort();
     hardware_display_task.abort();
 
-    println!("Application terminated");
+    info!("Application terminated");
 }
 
 /// Handle hardware events (T036, T055-T061)
@@ -222,22 +228,22 @@ async fn handle_hardware_event(
     snapcast_command_tx: &tokio::sync::mpsc::UnboundedSender<SnapcastCommand>,
     homeassistant_command_tx: &tokio::sync::mpsc::UnboundedSender<HomeAssistantCommand>,
 ) -> bool {
-    println!("Handle hardware event: {:?}", event);
+    debug!("Handle hardware event: {:?}", event);
     match event {
         HardwareEvent::DeviceConnected => {
-            println!("Hardware event: Device connected");
+            info!("Hardware device connected");
             state.set_hardware_connected(true);
 
             // If server is already connected and we have room state, display it
             if state.server_connected && state.room.is_some() {
-                println!("  Hardware connected, refreshing display");
+                debug!("Hardware connected, refreshing display");
                 return true; // Trigger screen refresh
             } else {
-                println!("  Waiting for server connection and room state...");
+                debug!("Waiting for server connection and room state...");
             }
         }
         HardwareEvent::DeviceDisconnected => {
-            println!("Hardware event: Device disconnected");
+            info!("Hardware device disconnected");
             state.set_hardware_connected(false);
         }
         // T065-T066: Knob rotation controls volume (handled in ApplicationState)
@@ -251,19 +257,18 @@ async fn handle_hardware_event(
                         // T060: Send appropriate IR command based on delta (positive = up, negative = down)
                         if delta > 0 {
                             for _ in 0..delta {
-                                println!(
-                                    "Hardware event: Knob {} rotated up - Amplifier Volume Up",
-                                    knob_id
-                                );
-                                let _ = homeassistant_command_tx.send(HomeAssistantCommand::VolumeUp);
+                                debug!("Knob {} rotated up - sending amplifier volume up", knob_id);
+                                let _ =
+                                    homeassistant_command_tx.send(HomeAssistantCommand::VolumeUp);
                             }
                         } else if delta < 0 {
                             for _ in 0..delta.abs() {
-                                println!(
-                                    "Hardware event: Knob {} rotated down - Amplifier Volume Down",
+                                debug!(
+                                    "Knob {} rotated down - sending amplifier volume down",
                                     knob_id
                                 );
-                                let _ = homeassistant_command_tx.send(HomeAssistantCommand::VolumeDown);
+                                let _ =
+                                    homeassistant_command_tx.send(HomeAssistantCommand::VolumeDown);
                             }
                         }
                         return false;
@@ -271,9 +276,10 @@ async fn handle_hardware_event(
                 }
                 _ => {
                     // On other pages (Status, StreamSelection), control Snapcast volume
-                    if let Some((client_id, new_volume)) = state.handle_knob_rotated(knob_id, delta) {
-                        println!(
-                            "Hardware event: Knob {} rotated (delta: {}) - Snapcast Volume: {}%",
+                    if let Some((client_id, new_volume)) = state.handle_knob_rotated(knob_id, delta)
+                    {
+                        debug!(
+                            "Knob {} rotated (delta: {}) - setting Snapcast volume to {}%",
                             knob_id, delta, new_volume
                         );
 
@@ -298,8 +304,8 @@ async fn handle_hardware_event(
                 crate::controller::state::PageView::Status => {
                     // On status page, button 0 toggles mute
                     if let Some((client_id, new_muted)) = state.handle_button_pressed(button_id) {
-                        println!(
-                            "Hardware event: Button {} pressed - Mute: {}",
+                        debug!(
+                            "Button {} pressed - toggling mute to {}",
                             button_id, new_muted
                         );
 
@@ -319,10 +325,7 @@ async fn handle_hardware_event(
                 crate::controller::state::PageView::StreamSelection => {
                     // T071: On stream selection page, buttons select streams
                     if button_id < 6 && (button_id as usize) < state.streams.len() {
-                        println!(
-                            "Hardware event: Button {} pressed - Selecting stream",
-                            button_id
-                        );
+                        debug!("Button {} pressed - selecting stream", button_id);
                         state.selected_stream_index = button_id as usize;
 
                         // T074: Mark control command sent for latency tracking
@@ -348,24 +351,21 @@ async fn handle_hardware_event(
                     if button_id == 0 {
                         // T036: Validate power toggle is allowed
                         if state.can_toggle_power() {
-                            println!(
-                                "Hardware event: Button {} pressed - Toggle amplifier power",
-                                button_id
-                            );
+                            debug!("Button {} pressed - toggling amplifier power", button_id);
 
                             let _ =
                                 homeassistant_command_tx.send(HomeAssistantCommand::TogglePower);
 
                             return false;
                         } else {
-                            eprintln!("Cannot toggle power: not connected or state unknown");
+                            warn!("Cannot toggle power: not connected or state unknown");
                             return false;
                         }
                     }
                     // T051: Button 2 navigates to source selection page
                     else if button_id == 2 {
-                        println!(
-                            "Hardware event: Button {} pressed - Navigate to source selection",
+                        debug!(
+                            "Button {} pressed - navigating to source selection",
                             button_id
                         );
                         state.current_page = crate::controller::state::PageView::SourceSelection;
@@ -387,8 +387,8 @@ async fn handle_hardware_event(
                             ];
 
                             if let Some(source) = sources.get(button_id as usize) {
-                                println!(
-                                    "Hardware event: Button {} pressed - Select source: {}",
+                                info!(
+                                    "Button {} pressed - selecting amplifier source: {}",
                                     button_id,
                                     source.display_name()
                                 );
@@ -398,13 +398,12 @@ async fn handle_hardware_event(
 
                                 // T048: Persist to file
                                 if let Err(e) = state.save_selected_source() {
-                                    eprintln!("Failed to save selected source: {}", e);
+                                    warn!("Failed to save selected source: {}", e);
                                 }
 
                                 // T046: Send IR command via MQTT
-                                let _ = homeassistant_command_tx.send(
-                                    HomeAssistantCommand::SelectSource { source: *source },
-                                );
+                                let _ = homeassistant_command_tx
+                                    .send(HomeAssistantCommand::SelectSource { source: *source });
 
                                 // T051: Navigate back to amplifier control page
                                 state.current_page =
@@ -414,7 +413,7 @@ async fn handle_hardware_event(
                             }
                         } else {
                             // T052: Error handling
-                            eprintln!("Cannot select source: Home Assistant not connected");
+                            warn!("Cannot select source: Home Assistant not connected");
                             return false;
                         }
                     }
@@ -424,7 +423,7 @@ async fn handle_hardware_event(
         }
         // T070: Page button press handling for page switching
         HardwareEvent::PageButtonPressed { page_id } => {
-            println!("Hardware event: Page button {} pressed", page_id);
+            debug!("Page button {} pressed", page_id);
             match page_id {
                 0 => {
                     // Page button 0: Status page
@@ -454,39 +453,39 @@ async fn handle_hardware_event(
 /// Handle Snapcast events (T037, T049-T052)
 /// Returns true if screen refresh is needed
 async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEvent) -> bool {
-    println!("Handle snapcast event: {:?}", event);
+    debug!("Handling Snapcast event: {:?}", event);
     let changed = match event {
         SnapcastEvent::ServerReconnected { room, streams } => {
-            println!("Snapcast event: Server reconnected");
+            info!("Snapcast server reconnected");
             state.set_server_connected(true);
 
             // Update streams
-            println!("  Received {} streams from server", streams.len());
+            info!("Received {} streams from Snapcast server", streams.len());
             state.update_streams(streams);
 
             // Update room state
             if let Some(room_state) = room {
-                println!(
-                    "  Room '{}' found - Volume: {}%, Muted: {}, Connected: {}",
+                info!(
+                    "Room '{}' found - Volume: {}%, Muted: {}, Connected: {}",
                     room_state.name, room_state.volume, room_state.muted, room_state.connected
                 );
                 state.update_room_state(room_state);
 
                 // If hardware is connected, we could display the status now
                 if state.hardware_connected {
-                    println!("  Ready to display on hardware");
+                    debug!("Hardware ready - triggering display refresh");
                     return true; // T052: Trigger screen refresh
                 }
             } else {
-                println!(
-                    "  Warning: Room '{}' not found on server",
+                warn!(
+                    "Room '{}' not found on Snapcast server",
                     state.config.room.client_id
                 );
             }
             false
         }
         SnapcastEvent::ServerDisconnected => {
-            println!("Snapcast event: Server disconnected");
+            warn!("Snapcast server disconnected");
             state.set_server_connected(false);
             false
         }
@@ -496,66 +495,59 @@ async fn handle_snapcast_event(state: &mut ApplicationState, event: SnapcastEven
             volume,
             muted,
         } => {
-            println!(
-                "Snapcast event: Volume changed for client '{}' - Volume: {}%, Muted: {}",
+            debug!(
+                "Client '{}' volume changed - Volume: {}%, Muted: {}",
                 client_id, volume, muted
             );
 
             // T074: Validate control command latency
             let (is_valid, elapsed) = state.validate_control_command_latency();
-            if let Some(ms) = elapsed {
-                if is_valid {
-                    println!(
-                        "  Control command feedback latency: {}ms (within 500ms limit)",
-                        ms
-                    );
-                }
+            if let Some(ms) = elapsed
+                && is_valid
+            {
+                debug!(
+                    "Control command feedback latency: {}ms (within 500ms limit)",
+                    ms
+                );
             }
 
-            let changed = state.handle_volume_changed(&client_id, volume, muted);
-
-            changed // T052: Return true if refresh needed
+            state.handle_volume_changed(&client_id, volume, muted) // T052: Return true if refresh needed
         }
         // T050: Handle stream changes
         SnapcastEvent::StreamChanged {
             group_id,
             stream_id,
         } => {
-            println!(
-                "Snapcast event: Stream changed for client '{}' to '{}'",
-                group_id, stream_id
-            );
+            info!("Stream changed for group '{}' to '{}'", group_id, stream_id);
 
             // T074: Validate control command latency
             let (is_valid, elapsed) = state.validate_control_command_latency();
-            if let Some(ms) = elapsed {
-                if is_valid {
-                    println!(
-                        "  Control command feedback latency: {}ms (within 500ms limit)",
-                        ms
-                    );
-                }
+            if let Some(ms) = elapsed
+                && is_valid
+            {
+                debug!(
+                    "Control command feedback latency: {}ms (within 500ms limit)",
+                    ms
+                );
             }
 
-            let changed = state.handle_stream_changed(&group_id, stream_id);
-
-            changed // T052: Return true if refresh needed
+            state.handle_stream_changed(&group_id, stream_id) // T052: Return true if refresh needed
         }
         // T051: Handle stream updates
         SnapcastEvent::StreamUpdate { stream_id, stream } => {
-            println!(
-                "Snapcast event: Stream '{}' updated - Name: '{}', Status: {:?}",
+            debug!(
+                "Stream '{}' updated - Name: '{}', Status: {:?}",
                 stream_id, stream.name, stream.status
             );
-            let changed = state.handle_stream_update(&stream_id, stream);
-            changed // T052: Return true if refresh needed
+
+            state.handle_stream_update(&stream_id, stream) // T052: Return true if refresh needed
         }
         _ => {
             // Other Snapcast events (ClientConnected, ClientDisconnected)
             false
         }
     };
-    eprintln!("Event changed: {}", changed);
+    debug!("Event state changed: {}", changed);
     changed
 }
 
@@ -669,16 +661,16 @@ fn load_config(path: &PathBuf) -> ConnectionSettings {
     match ConnectionSettings::load(path) {
         Ok(config) => config,
         Err(e) => {
-            eprintln!("Failed to load configuration from {:?}", path);
-            eprintln!("Error: {}", e);
-            eprintln!();
-            eprintln!("Please create a config.toml file with the following format:");
-            eprintln!("[server]");
-            eprintln!("address = \"192.168.1.100\"");
-            eprintln!("port = 1705");
-            eprintln!();
-            eprintln!("[room]");
-            eprintln!("client_id = \"living-room\"");
+            error!("Failed to load configuration from {:?}", path);
+            error!("Error: {}", e);
+            error!("");
+            error!("Please create a config.toml file with the following format:");
+            error!("[server]");
+            error!("address = \"192.168.1.100\"");
+            error!("port = 1705");
+            error!("");
+            error!("[room]");
+            error!("client_id = \"living-room\"");
             std::process::exit(1);
         }
     }

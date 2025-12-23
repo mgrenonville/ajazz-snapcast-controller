@@ -8,6 +8,7 @@ use crate::hardware::{
 use ajazz_sdk::{AsyncAjazz, list_devices, new_hidapi};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 /// USB HID device manager for Ajazz controller
 pub struct DeviceManager {
@@ -45,8 +46,8 @@ impl DeviceManager {
         let device = AsyncAjazz::connect_with_retries(&hid, *kind, serial, 10)
             .map_err(|e| HardwareError::SdkError(format!("Failed to connect: {}", e)))?;
 
-        println!(
-            "Connected to '{}' with firmware version '{}'",
+        info!(
+            "Hardware device connected: serial='{}' firmware='{}'",
             device.serial_number().await?,
             device.firmware_version().await?
         );
@@ -78,7 +79,7 @@ impl DeviceManager {
 
     /// Handle device disconnection
     pub fn handle_disconnection(&mut self) {
-        println!("Disconnection detected...");
+        info!("Hardware device disconnection detected");
         if self.device.is_some() {
             self.device = None;
             let _ = self.event_tx.send(HardwareEvent::DeviceDisconnected);
@@ -98,7 +99,7 @@ impl DeviceManager {
                 }
                 Err(e) => {
                     // Other error, log and retry
-                    eprintln!("Error detecting device: {}", e);
+                    error!("Error detecting hardware device: {}", e);
                     tokio::time::sleep(retry_interval).await;
                 }
             }
@@ -158,7 +159,7 @@ impl DeviceConnectionHandler {
     /// Wait for device connection with exponential backoff
     async fn ensure_connected(&mut self) {
         // T028: Display waiting message on console (can't show on device before it's connected)
-        println!("Waiting for hardware...");
+        info!("Waiting for hardware device...");
 
         loop {
             let is_connected = {
@@ -172,7 +173,7 @@ impl DeviceConnectionHandler {
 
             match self.try_connect().await {
                 Ok(_) => {
-                    println!("Hardware device connected successfully");
+                    info!("Hardware device connected successfully");
                     break;
                 }
                 Err(HardwareError::DeviceNotFound) => {
@@ -180,8 +181,8 @@ impl DeviceConnectionHandler {
                     tokio::time::sleep(self.current_poll_interval).await;
                 }
                 Err(e) => {
-                    eprintln!(
-                        "Device connection failed: {}, retrying in {:?}",
+                    warn!(
+                        "Hardware device connection failed: {}, retrying in {:?}",
                         e, self.current_poll_interval
                     );
                     tokio::time::sleep(self.current_poll_interval).await;
@@ -194,10 +195,7 @@ impl DeviceConnectionHandler {
     async fn check_device_alive(&self) -> bool {
         let manager = self.manager.lock().await;
         if let Some(device) = manager.device() {
-            match device.keep_alive().await {
-                Ok(_) => true,
-                Err(_) => false,
-            }
+            (device.keep_alive().await).is_ok()
         } else {
             false
         }
@@ -212,7 +210,7 @@ impl DeviceConnectionHandler {
         let mut event_poll_interval = tokio::time::interval(Duration::from_millis(10));
 
         loop {
-            eprintln!("handle_connection_lifecycle loop");
+            debug!("Hardware connection lifecycle loop iteration");
             tokio::select! {
                 // Health check timer
                 _ = health_check_interval.tick() => {
@@ -229,7 +227,7 @@ impl DeviceConnectionHandler {
 
                     // Check if device is still alive
                     if !self.check_device_alive().await {
-                        eprintln!("Hardware device health check failed");
+                        warn!("Hardware device health check failed");
                         let mut manager = self.manager.lock().await;
                         manager.handle_disconnection();
                         // Will reconnect on next iteration
@@ -239,7 +237,7 @@ impl DeviceConnectionHandler {
                 // Poll for hardware events (T055-T057)
                 _ = event_poll_interval.tick() => {
                     if let Err(e) = self.poll_hardware_events().await {
-                        eprintln!("Error polling hardware events: {}", e);
+                        error!("Error polling hardware events: {}", e);
                     }
                 }
             }
@@ -311,14 +309,14 @@ pub async fn device_display_loop(
     let display_manager = DisplayManager::new()?;
 
     loop {
-        eprintln!("device display loop");
+        debug!("Hardware display loop iteration");
 
         // Wait for display command
         if let Ok(()) = command_rx.changed().await {
             // Get the latest command (may have been updated multiple times)
             // Clone to drop the borrow guard before awaiting
             let command = command_rx.borrow_and_update().clone();
-            eprintln!("received display loop: {:?}", command);
+            debug!("Received display command: {:?}", command);
 
             if let Some(command) = command {
                 // Lock manager to access device
@@ -326,44 +324,44 @@ pub async fn device_display_loop(
                 if let Some(device) = manager_guard.device() {
                     match command {
                         HardwareCommand::UpdateStatusPage(layout) => {
-                            eprintln!("Update status page: {:?}", layout);
+                            debug!("Updating status page");
                             if let Err(e) =
                                 display_manager.render_status_page(device, &layout).await
                             {
-                                eprintln!("Failed to update status page: {}", e);
+                                error!("Failed to update status page: {}", e);
                             }
                         }
                         HardwareCommand::UpdateStreamSelectionPage(layout) => {
-                            eprintln!("Update stream selection page: {:?}", layout);
+                            debug!("Updating stream selection page");
                             if let Err(e) = display_manager
                                 .render_stream_selection_page(device, &layout)
                                 .await
                             {
-                                eprintln!("Failed to update stream selection page: {}", e);
+                                error!("Failed to update stream selection page: {}", e);
                             }
                         }
                         HardwareCommand::UpdateAmplifierPage(layout) => {
-                            eprintln!("Update amplifier control page: {:?}", layout);
+                            debug!("Updating amplifier control page");
                             if let Err(e) = display_manager
                                 .render_amplifier_control_page(device, &layout)
                                 .await
                             {
-                                eprintln!("Failed to update amplifier control page: {}", e);
+                                error!("Failed to update amplifier control page: {}", e);
                             }
                         }
                         HardwareCommand::UpdateSourceSelectionPage(layout) => {
-                            eprintln!("Update source selection page: {:?}", layout);
+                            debug!("Updating source selection page");
                             if let Err(e) = display_manager
                                 .render_source_selection_page(device, &layout)
                                 .await
                             {
-                                eprintln!("Failed to update source selection page: {}", e);
+                                error!("Failed to update source selection page: {}", e);
                             }
                         }
                         HardwareCommand::ShowError(error_msg) => {
-                            eprintln!("Showing error: {}", error_msg);
+                            info!("Showing error on display: {}", error_msg);
                             if let Err(e) = display_manager.render_error(device, &error_msg).await {
-                                eprintln!("Failed to show error: {}", e);
+                                error!("Failed to show error on display: {}", e);
                             }
                         }
                     }

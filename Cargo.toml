@@ -16,6 +16,10 @@ toml = "0.8"
 anyhow = "1"
 thiserror = "1"
 
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
 # External crates
 ajazz-sdk = {version = "0.2.1", features = ["async"] }
 snapcast-control = "0.1.0"

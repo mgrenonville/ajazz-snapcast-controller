@@ -7,6 +7,7 @@ use crate::snapcast::{
 use snapcast_control::{ClientError, SnapcastConnection};
 use std::net::SocketAddr;
 use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 /// Snapcast server connection manager
 pub struct SnapcastClient {
@@ -89,7 +90,7 @@ impl SnapcastClient {
                     break;
                 }
                 Err(e) => {
-                    eprintln!("Failed to connect to Snapcast server: {}", e);
+                    warn!("Failed to connect to Snapcast server: {}", e);
                     tokio::time::sleep(retry_interval).await;
                 }
             }
@@ -133,7 +134,10 @@ impl SnapcastClient {
     pub fn get_room_state(&self, client_id: &str) -> Option<crate::snapcast::types::RoomState> {
         let connection = self.connection.as_ref()?;
 
-        println!("clients: {}", connection.state.clients.len());
+        debug!(
+            "Snapcast clients connected: {}",
+            connection.state.clients.len()
+        );
 
         // Get client info from state
         let client = connection.state.clients.get(client_id)?;
@@ -232,7 +236,7 @@ impl SnapcastClient {
             muted,
         };
 
-        eprintln!("Snapcast client: Set volume: {volume}");
+        info!("Snapcast: Set volume to {}%", volume);
         connection
             .client_set_volume(client_id, volume_params)
             .await
@@ -295,7 +299,7 @@ impl SnapcastClient {
     fn handle_result(&self, result: snapcast_control::SnapcastResult) {
         use snapcast_control::SnapcastResult;
         match result {
-            SnapcastResult::ClientGetStatus(get_status_result) => todo!(),
+            SnapcastResult::ClientGetStatus(_get_status_result) => todo!(),
             SnapcastResult::ClientSetVolume(id, params) => {
                 let volume = params.volume.percent.min(100) as u8;
                 let muted = params.volume.muted;
@@ -322,7 +326,10 @@ impl SnapcastClient {
                 // When stream is set for a group, emit StreamChanged events for each client
                 let stream_id = group.stream_id.clone();
 
-                eprintln!("Group '{}' stream changed to '{}'", group_id, stream_id);
+                info!(
+                    "Snapcast: Group '{}' stream changed to '{}'",
+                    group_id, stream_id
+                );
                 let _ = self.event_tx.send(SnapcastEvent::StreamChanged {
                     group_id: group_id.clone(),
                     stream_id: stream_id.clone(),
@@ -381,15 +388,15 @@ impl SnapcastClient {
             // For now, we'll check if our client is in this group
             Notification::GroupOnStreamChanged { params } => {
                 // Check if our client is in this group
-                if let Some(connection) = &self.connection {
-                    if let Some(group) = connection.state.groups.get(&params.id) {
-                        // Check if our client is in this group
-                        if group.clients.contains(&self.client_id) {
-                            let _ = self.event_tx.send(SnapcastEvent::StreamChanged {
-                                group_id: group.id.clone(),
-                                stream_id: params.stream_id,
-                            });
-                        }
+                if let Some(connection) = &self.connection
+                    && let Some(group) = connection.state.groups.get(&params.id)
+                {
+                    // Check if our client is in this group
+                    if group.clients.contains(&self.client_id) {
+                        let _ = self.event_tx.send(SnapcastEvent::StreamChanged {
+                            group_id: group.id.clone(),
+                            stream_id: params.stream_id,
+                        });
                     }
                 }
             }
@@ -400,40 +407,39 @@ impl SnapcastClient {
                 // We also emit an event so the application can update its cached stream data
 
                 // Get the updated stream from the connection state
-                if let Some(connection) = &self.connection {
-                    if let Some(stream_entry) = connection.state.streams.get(&params.id) {
-                        if let Some(stream) = stream_entry.value().as_ref() {
-                            // Convert to our AudioStream type
-                            let status = match stream.status {
-                                snapcast_control::stream::StreamStatus::Playing => {
-                                    crate::snapcast::types::StreamStatus::Playing
-                                }
-                                snapcast_control::stream::StreamStatus::Idle => {
-                                    crate::snapcast::types::StreamStatus::Idle
-                                }
-                                _ => crate::snapcast::types::StreamStatus::Unknown,
-                            };
-
-                            let name = stream
-                                .uri
-                                .query
-                                .get("name")
-                                .cloned()
-                                .unwrap_or_else(|| stream.uri.path.clone());
-
-                            let audio_stream = crate::snapcast::types::AudioStream {
-                                stream_id: stream.id.clone(),
-                                name,
-                                status,
-                                metadata: None, // Metadata fields are private
-                            };
-
-                            let _ = self.event_tx.send(SnapcastEvent::StreamUpdate {
-                                stream_id: params.id.clone(),
-                                stream: audio_stream,
-                            });
+                if let Some(connection) = &self.connection
+                    && let Some(stream_entry) = connection.state.streams.get(&params.id)
+                    && let Some(stream) = stream_entry.value().as_ref()
+                {
+                    // Convert to our AudioStream type
+                    let status = match stream.status {
+                        snapcast_control::stream::StreamStatus::Playing => {
+                            crate::snapcast::types::StreamStatus::Playing
                         }
-                    }
+                        snapcast_control::stream::StreamStatus::Idle => {
+                            crate::snapcast::types::StreamStatus::Idle
+                        }
+                        _ => crate::snapcast::types::StreamStatus::Unknown,
+                    };
+
+                    let name = stream
+                        .uri
+                        .query
+                        .get("name")
+                        .cloned()
+                        .unwrap_or_else(|| stream.uri.path.clone());
+
+                    let audio_stream = crate::snapcast::types::AudioStream {
+                        stream_id: stream.id.clone(),
+                        name,
+                        status,
+                        metadata: None, // Metadata fields are private
+                    };
+
+                    let _ = self.event_tx.send(SnapcastEvent::StreamUpdate {
+                        stream_id: params.id.clone(),
+                        stream: audio_stream,
+                    });
                 }
             }
 
@@ -450,7 +456,7 @@ impl SnapcastClient {
                 });
             }
             Notification::StreamOnProperties { params } => {
-                println!("received stream properties : {:?}", params);
+                debug!("Snapcast: Received stream properties: {:?}", params);
             }
             // Other notifications are handled by the library's internal state
             _ => {}
@@ -497,7 +503,7 @@ impl ConnectionHandler {
     /// Wait for connection with exponential backoff
     async fn ensure_connected(&mut self) {
         // T029: Display connecting message
-        println!("Connecting to server...");
+        info!("Connecting to Snapcast server...");
 
         while !self.client.is_connected() {
             match self.try_connect().await {
@@ -505,7 +511,7 @@ impl ConnectionHandler {
                     // Request initial server status after connection
                     if let Err(e) = self.client.get_server_status().await {
                         // T030: Display connection error
-                        eprintln!("Connection Error: Failed to get server status: {}", e);
+                        error!("Failed to get Snapcast server status: {}", e);
                         self.client.handle_disconnection();
                         tokio::time::sleep(self.current_retry_interval).await;
                         continue;
@@ -513,13 +519,13 @@ impl ConnectionHandler {
 
                     // T031 & T037: Emit ServerReconnected event with room state
                     self.client.emit_server_reconnected();
-                    println!("Connected to Snapcast server successfully");
+                    info!("Connected to Snapcast server successfully");
                     break;
                 }
                 Err(e) => {
                     // T030: Display connection error
-                    eprintln!(
-                        "Connection Error: {}, retrying in {:?}",
+                    warn!(
+                        "Snapcast connection failed: {}, retrying in {:?}",
                         e, self.current_retry_interval
                     );
                     tokio::time::sleep(self.current_retry_interval).await;
@@ -552,11 +558,11 @@ impl ConnectionHandler {
                         }
                         Ok(None) => {
                             // Connection closed, will reconnect on next iteration
-                            eprintln!("Server connection closed");
+                            warn!("Snapcast server connection closed");
                             continue;
                         }
                         Err(e) => {
-                            eprintln!("Error receiving message: {}", e);
+                            error!("Error receiving Snapcast message: {}", e);
                             self.client.handle_disconnection();
                             // Will reconnect on next iteration
                         }
@@ -566,7 +572,7 @@ impl ConnectionHandler {
                 // Handle commands from main event loop
                 Some(command) = command_rx.recv() => {
                     if let Err(e) = self.handle_command(command).await {
-                        eprintln!("Error executing command: {}", e);
+                        error!("Error executing Snapcast command: {}", e);
                     }
                 }
             }

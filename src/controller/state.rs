@@ -1,12 +1,13 @@
 // Controller state - Central state machine for the application
 
 use crate::config::settings::ConnectionSettings;
-use crate::homeassistant::types::{AmplifierState, HomeAssistantEvent};
 use crate::homeassistant::AmplifierSource;
+use crate::homeassistant::types::{AmplifierState, HomeAssistantEvent};
 use crate::snapcast::types::{AudioStream, RoomState};
 use std::fs;
 use std::path::PathBuf;
 use std::time::Instant;
+use tracing::{debug, error, info, warn};
 
 /// Central state machine for the application
 #[derive(Debug)]
@@ -122,16 +123,16 @@ impl ApplicationState {
     /// Returns true if state changed and screen refresh is needed
     pub fn handle_volume_changed(&mut self, client_id: &str, volume: u8, muted: bool) -> bool {
         // Only update if this is our room's client
-        if let Some(room) = &mut self.room {
-            if room.client_id == client_id {
-                let changed = room.volume != volume || room.muted != muted;
-                if changed {
-                    room.volume = volume;
-                    room.muted = muted;
-                    // T054: Mark state change timestamp
-                    self.last_state_change = Some(Instant::now());
-                    return true;
-                }
+        if let Some(room) = &mut self.room
+            && room.client_id == client_id
+        {
+            let changed = room.volume != volume || room.muted != muted;
+            if changed {
+                room.volume = volume;
+                room.muted = muted;
+                // T054: Mark state change timestamp
+                self.last_state_change = Some(Instant::now());
+                return true;
             }
         }
         false
@@ -141,15 +142,15 @@ impl ApplicationState {
     /// Returns true if state changed and screen refresh is needed
     pub fn handle_stream_changed(&mut self, group_id: &str, stream_id: String) -> bool {
         // Only update if this is our room's client
-        if let Some(room) = &mut self.room {
-            if room.group_id == group_id {
-                let changed = room.stream_id.as_ref() != Some(&stream_id);
-                if changed {
-                    room.stream_id = Some(stream_id);
-                    // T054: Mark state change timestamp
-                    self.last_state_change = Some(Instant::now());
-                    return true;
-                }
+        if let Some(room) = &mut self.room
+            && room.group_id == group_id
+        {
+            let changed = room.stream_id.as_ref() != Some(&stream_id);
+            if changed {
+                room.stream_id = Some(stream_id);
+                // T054: Mark state change timestamp
+                self.last_state_change = Some(Instant::now());
+                return true;
             }
         }
         false
@@ -169,12 +170,12 @@ impl ApplicationState {
             if changed {
                 *stream = updated_stream;
                 // Only trigger refresh if this is the currently playing stream
-                if let Some(room) = &self.room {
-                    if room.stream_id.as_ref() == Some(&stream_id.to_string()) {
-                        // T054: Mark state change timestamp
-                        self.last_state_change = Some(Instant::now());
-                        return true;
-                    }
+                if let Some(room) = &self.room
+                    && room.stream_id.as_ref() == Some(&stream_id.to_string())
+                {
+                    // T054: Mark state change timestamp
+                    self.last_state_change = Some(Instant::now());
+                    return true;
                 }
             }
         }
@@ -216,10 +217,7 @@ impl ApplicationState {
                 let is_valid = elapsed_ms < 2000;
 
                 if !is_valid {
-                    eprintln!(
-                        "WARNING: Screen update latency exceeded 2 seconds: {}ms",
-                        elapsed_ms
-                    );
+                    warn!("Screen update latency exceeded 2 seconds: {}ms", elapsed_ms);
                 }
 
                 return (is_valid, Some(elapsed_ms));
@@ -252,8 +250,8 @@ impl ApplicationState {
             let is_valid = elapsed_ms < 500;
 
             if !is_valid {
-                eprintln!(
-                    "WARNING: Control command feedback latency exceeded 500ms: {}ms",
+                warn!(
+                    "Control command feedback latency exceeded 500ms: {}ms",
                     elapsed_ms
                 );
             }
@@ -316,18 +314,19 @@ impl ApplicationState {
         match event {
             HomeAssistantEvent::BrokerConnected => {
                 self.homeassistant_connected = true;
-                eprintln!("Home Assistant connected");
+                info!("Home Assistant connected");
                 // Refresh screen if on amplifier control page
                 self.current_page == PageView::AmplifierControl
             }
 
             HomeAssistantEvent::BrokerDisconnected => {
                 self.homeassistant_connected = false;
-                eprintln!("Home Assistant disconnected");
+                warn!("Home Assistant disconnected");
                 // Mark amplifier power as unknown (keep selected_source as it's tracked locally)
                 if let Some(ref mut amplifier) = self.amplifier {
                     amplifier.power_on = None;
-                    amplifier.set_availability(crate::homeassistant::types::EntityAvailability::Unknown);
+                    amplifier
+                        .set_availability(crate::homeassistant::types::EntityAvailability::Unknown);
                 }
                 // Refresh screen if on amplifier control page
                 self.current_page == PageView::AmplifierControl
@@ -336,15 +335,15 @@ impl ApplicationState {
             HomeAssistantEvent::EntityStateChanged { entity_id, state } => {
                 if let Some(ref mut amplifier) = self.amplifier {
                     // Only handle power state changes (source is managed locally)
-                    if let Some(ref ha_config) = self.config.homeassistant {
-                        if entity_id == ha_config.amplifier.power_entity {
-                            // Power state changed
-                            let power_on = state.to_uppercase() == "ON";
-                            amplifier.set_power(power_on);
-                            eprintln!("Amplifier power: {}", if power_on { "ON" } else { "OFF" });
-                            self.last_state_change = Some(Instant::now());
-                            return self.current_page == PageView::AmplifierControl;
-                        }
+                    if let Some(ref ha_config) = self.config.homeassistant
+                        && entity_id == ha_config.amplifier.power_entity
+                    {
+                        // Power state changed
+                        let power_on = state.to_uppercase() == "ON";
+                        amplifier.set_power(power_on);
+                        info!("Amplifier power: {}", if power_on { "ON" } else { "OFF" });
+                        self.last_state_change = Some(Instant::now());
+                        return self.current_page == PageView::AmplifierControl;
                     }
                 }
                 false
@@ -361,7 +360,7 @@ impl ApplicationState {
                         crate::homeassistant::types::EntityAvailability::Unavailable
                     };
                     amplifier.set_availability(availability);
-                    eprintln!("Amplifier availability: {:?}", availability);
+                    debug!("Amplifier availability: {:?}", availability);
                     self.last_state_change = Some(Instant::now());
                     return self.current_page == PageView::AmplifierControl;
                 }
@@ -369,13 +368,13 @@ impl ApplicationState {
             }
 
             HomeAssistantEvent::CommandAcknowledged { entity_id } => {
-                eprintln!("Command acknowledged for {}", entity_id);
+                debug!("Command acknowledged for {}", entity_id);
                 // Could show visual feedback here
                 false
             }
 
             HomeAssistantEvent::CommandFailed { entity_id, error } => {
-                eprintln!("Command failed for {}: {}", entity_id, error);
+                error!("Command failed for {}: {}", entity_id, error);
                 // Could show error on screen
                 self.current_page == PageView::AmplifierControl
             }
@@ -426,34 +425,71 @@ impl ApplicationState {
 
     /// Save selected source to file
     pub fn save_selected_source(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(source) = self.get_selected_source() {
-            if let Some(state_file) = Self::get_amplifier_state_file() {
-                // Create parent directory if it doesn't exist
-                if let Some(parent) = state_file.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-
-                // Serialize and save
-                let json = serde_json::to_string(&source)?;
-                fs::write(state_file, json)?;
+        if let Some(source) = self.get_selected_source()
+            && let Some(state_file) = Self::get_amplifier_state_file()
+        {
+            // Create parent directory if it doesn't exist
+            if let Some(parent) = state_file.parent() {
+                fs::create_dir_all(parent)?;
             }
+
+            // Serialize and save
+            let json = serde_json::to_string(&source)?;
+            fs::write(state_file, json)?;
         }
         Ok(())
     }
 
     /// Load selected source from file
     pub fn load_selected_source(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(state_file) = Self::get_amplifier_state_file() {
-            if state_file.exists() {
-                let json = fs::read_to_string(state_file)?;
-                let source: AmplifierSource = serde_json::from_str(&json)?;
+        if let Some(state_file) = Self::get_amplifier_state_file()
+            && state_file.exists()
+        {
+            let json = fs::read_to_string(state_file)?;
+            let source: AmplifierSource = serde_json::from_str(&json)?;
 
-                // Set the source in amplifier state
-                self.set_selected_source(source);
+            // Set the source in amplifier state
+            self.set_selected_source(source);
 
-                eprintln!("Loaded amplifier source: {}", source.display_name());
-            }
+            info!("Loaded amplifier source: {}", source.display_name());
         }
         Ok(())
+    }
+
+    /// T063: Navigate to next page in the main page cycle
+    /// Cycle: Status → StreamSelection → AmplifierControl → Status
+    /// Note: SourceSelection is a sub-page and not part of the main cycle
+    pub fn next_page(&mut self) {
+        self.current_page = match self.current_page {
+            PageView::Status => PageView::StreamSelection,
+            PageView::StreamSelection => {
+                // Only go to AmplifierControl if Home Assistant is configured
+                if self.amplifier.is_some() {
+                    PageView::AmplifierControl
+                } else {
+                    PageView::Status
+                }
+            }
+            PageView::AmplifierControl | PageView::SourceSelection => PageView::Status,
+            PageView::Settings => PageView::Status, // Settings not implemented yet
+        };
+    }
+
+    /// T064: Navigate to previous page in the main page cycle
+    /// Cycle: Status → AmplifierControl → StreamSelection → Status
+    pub fn previous_page(&mut self) {
+        self.current_page = match self.current_page {
+            PageView::Status => {
+                // Only go to AmplifierControl if Home Assistant is configured
+                if self.amplifier.is_some() {
+                    PageView::AmplifierControl
+                } else {
+                    PageView::StreamSelection
+                }
+            }
+            PageView::StreamSelection => PageView::Status,
+            PageView::AmplifierControl | PageView::SourceSelection => PageView::StreamSelection,
+            PageView::Settings => PageView::Status, // Settings not implemented yet
+        };
     }
 }

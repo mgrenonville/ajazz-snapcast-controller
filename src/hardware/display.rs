@@ -8,6 +8,7 @@ use imageproc::image::{DynamicImage, ImageBuffer, Rgba, RgbaImage};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::sleep;
+use tracing::debug;
 
 /// Screen dimensions for button displays (typical for Ajazz devices)
 const BUTTON_SCREEN_WIDTH: u32 = 80;
@@ -318,7 +319,7 @@ impl DisplayManager {
         device: &Arc<AsyncAjazz>,
         layout: &AmplifierControlPageLayout,
     ) -> Result<(), HardwareError> {
-        eprintln!("rendering amplifier page: {:?}", layout);
+        debug!("Rendering amplifier control page: {:?}", layout);
 
         // Button 0: Power status (T028)
         let power_on = match layout.power_status.as_str() {
@@ -380,7 +381,7 @@ impl DisplayManager {
         device: &Arc<AsyncAjazz>,
         layout: &SourceSelectionPageLayout,
     ) -> Result<(), HardwareError> {
-        eprintln!("rendering source selection page: {:?}", layout);
+        debug!("Rendering source selection page: {:?}", layout);
 
         // Get all available sources
         use crate::homeassistant::AmplifierSource;
@@ -427,8 +428,11 @@ pub struct StatusPageLayout {
     /// Server address display (button 4)
     pub server_address: String,
 
-    /// Room name display (button 5)
+    /// Room name display (button 5) - also serves as page indicator
     pub room_name: String,
+
+    /// T066: Page indicator text
+    pub page_indicator: String,
 }
 
 impl StatusPageLayout {
@@ -475,6 +479,7 @@ impl StatusPageLayout {
             connection_status,
             server_address,
             room_name,
+            page_indicator: "Status".to_string(),
         }
     }
 }
@@ -490,7 +495,7 @@ impl DisplayManager {
         device: &Arc<AsyncAjazz>,
         layout: &StatusPageLayout,
     ) -> Result<(), HardwareError> {
-        eprintln!("rendering: {:?}", layout);
+        debug!("Rendering status page: {:?}", layout);
         // Button 0: Mute status (T044)
         let muted = layout.mute_status == "MUTED";
         self.render_mute_screen(device, 0, muted).await?;
@@ -524,8 +529,8 @@ impl DisplayManager {
             .await?;
         // sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
 
-        // Button 5: Room name (T048)
-        self.render_room_screen(device, 5, &layout.room_name)
+        // Button 5: Room name (T048) with page indicator (T066)
+        self.render_room_screen(device, 5, &layout.room_name, &layout.page_indicator)
             .await?;
 
         Ok(())
@@ -628,11 +633,13 @@ impl DisplayManager {
 
     /// Render room name on button screen 5
     /// T048: Display room name with label
+    /// T066: Also displays page indicator at bottom
     pub async fn render_room_screen(
         &self,
         device: &Arc<AsyncAjazz>,
         button: u8,
         room_name: &str,
+        page_indicator: &str,
     ) -> Result<(), HardwareError> {
         let mut image = self.create_blank_image();
         self.draw_top_label(&mut image, "ROOM", 12.0, 8);
@@ -644,7 +651,11 @@ impl DisplayManager {
             room_name.to_string()
         };
 
-        self.draw_centered_text(&mut image, &display_name, 14.0, 5);
+        self.draw_centered_text(&mut image, &display_name, 14.0, -5);
+
+        // T066: Draw page indicator at bottom
+        self.draw_top_label(&mut image, page_indicator, 10.0, 60);
+
         self.send_image_to_button(device, button, image).await
     }
 
@@ -683,13 +694,14 @@ impl DisplayManager {
 
     /// Render complete stream selection page layout to all button screens
     /// T069: Display available streams across 6 button screens
+    /// T066: Include page indicator
     pub async fn render_stream_selection_page(
         &self,
         device: &Arc<AsyncAjazz>,
         layout: &StreamSelectionPageLayout,
     ) -> Result<(), HardwareError> {
-        // Render each of the 6 buttons with stream names
-        for button in 0..6 {
+        // Render buttons 0-4 with stream names
+        for button in 0..5 {
             self.render_stream_button(
                 device,
                 button,
@@ -698,6 +710,29 @@ impl DisplayManager {
             )
             .await?;
         }
+
+        // T066: Button 5 shows stream (if available) with page indicator at bottom
+        let mut image = self.create_blank_image();
+
+        // Show stream name if available
+        if let Some(ref stream_name) = layout.stream_names[5] {
+            if layout.selected_button == Some(5) {
+                self.draw_top_label(&mut image, ">", 16.0, 2);
+            }
+
+            let display_name = if stream_name.len() > 10 {
+                format!("{}...", &stream_name[0..7])
+            } else {
+                stream_name.to_string()
+            };
+
+            self.draw_centered_text(&mut image, &display_name, 13.0, -5);
+        }
+
+        // Draw page indicator at bottom
+        self.draw_top_label(&mut image, &layout.page_indicator, 10.0, 60);
+
+        self.send_image_to_button(device, 5, image).await?;
 
         Ok(())
     }
@@ -721,7 +756,7 @@ impl DisplayManager {
             let mut current_line = String::new();
 
             for word in words {
-                if current_line.len() + word.len() + 1 <= max_chars {
+                if current_line.len() + word.len() < max_chars {
                     if !current_line.is_empty() {
                         current_line.push(' ');
                     }
@@ -839,6 +874,9 @@ pub struct StreamSelectionPageLayout {
 
     /// Which button is currently selected (None if no selection)
     pub selected_button: Option<u8>,
+
+    /// T066: Page indicator text
+    pub page_indicator: String,
 }
 
 impl StreamSelectionPageLayout {
@@ -865,6 +903,7 @@ impl StreamSelectionPageLayout {
         Self {
             stream_names,
             selected_button,
+            page_indicator: "Streams".to_string(),
         }
     }
 }

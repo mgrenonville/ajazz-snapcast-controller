@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use rumqttc::{AsyncClient, Event, EventLoop, MqttOptions, Packet, QoS};
 use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 use crate::config::settings::{AmplifierPowerEntityConfig, HomeAssistantConfig};
 
@@ -92,16 +93,17 @@ impl MqttClient {
                     match event {
                         Ok(event) => {
                             if let Err(e) = self.handle_mqtt_event(event).await {
-                                eprintln!("Error handling MQTT event: {}", e);
+                                error!("Error handling MQTT event: {}", e);
                             }
                         }
                         Err(e) => {
-                            eprintln!("MQTT connection error: {}", e);
+                            error!("MQTT connection error: {}", e);
                             self.connection.set_disconnected();
                             let _ = self.event_tx.send(HomeAssistantEvent::BrokerDisconnected);
 
                             // Exponential backoff reconnection
                             self.connection.increase_backoff();
+                            info!("Reconnecting in {:?}", self.connection.reconnect_delay);
                             tokio::time::sleep(self.connection.reconnect_delay).await;
                         }
                     }
@@ -110,7 +112,7 @@ impl MqttClient {
                 // Handle commands from application
                 Some(command) = self.command_rx.recv() => {
                     if let Err(e) = self.handle_command(command).await {
-                        eprintln!("Error handling command: {}", e);
+                        error!("Error handling command: {}", e);
                     }
                 }
             }
@@ -121,7 +123,7 @@ impl MqttClient {
     async fn handle_mqtt_event(&mut self, event: Event) -> Result<(), Box<dyn std::error::Error>> {
         match event {
             Event::Incoming(Packet::ConnAck(_)) => {
-                eprintln!("Connected to MQTT broker");
+                info!("Connected to MQTT broker");
                 self.connection.set_connected();
                 let _ = self.event_tx.send(HomeAssistantEvent::BrokerConnected);
 
@@ -134,13 +136,14 @@ impl MqttClient {
             }
 
             Event::Incoming(Packet::Disconnect) => {
-                eprintln!("Disconnected from MQTT broker");
+                warn!("Disconnected from MQTT broker");
                 self.connection.set_disconnected();
                 let _ = self.event_tx.send(HomeAssistantEvent::BrokerDisconnected);
             }
 
             _ => {
                 // Ignore other packet types
+                debug!("Received MQTT event: {:?}", event);
             }
         }
 
@@ -163,14 +166,14 @@ impl MqttClient {
         self.client
             .subscribe(&power_state_topic, QoS::AtLeastOnce)
             .await?;
-        eprintln!("Subscribed to: {}", power_state_topic);
+        info!("Subscribed to power state: {}", power_state_topic);
 
         // Subscribe to power availability topic
         let power_avail_topic = format!("homeassistant/switch/{}/availability", power_object_id);
         self.client
             .subscribe(&power_avail_topic, QoS::AtLeastOnce)
             .await?;
-        eprintln!("Subscribed to: {}", power_avail_topic);
+        info!("Subscribed to power availability: {}", power_avail_topic);
 
         Ok(())
     }
@@ -212,8 +215,8 @@ impl MqttClient {
             let parsed: Zigbee2MqttStatePayload = match serde_json::from_str(payload) {
                 Ok(p) => p,
                 Err(e) => {
-                    eprintln!("Failed to parse Zigbee2MQTT payload: {}", e);
-                    eprintln!("Payload: {}", payload);
+                    error!("Failed to parse Zigbee2MQTT payload: {}", e);
+                    debug!("Invalid payload: {}", payload);
                     return Ok(()); // Skip this message
                 }
             };
@@ -221,6 +224,11 @@ impl MqttClient {
             // Power state update
             let power_on = parsed.state.to_uppercase() == "ON";
             self.amplifier_state.set_power(power_on);
+            info!(
+                "Power state changed: {} ({})",
+                if power_on { "ON" } else { "OFF" },
+                self.power_entity_config.power_entity
+            );
 
             let _ = self.event_tx.send(HomeAssistantEvent::EntityStateChanged {
                 entity_id: self.power_entity_config.power_entity.clone(),
@@ -238,6 +246,12 @@ impl MqttClient {
         payload: &str,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let available = payload.to_lowercase() == "online";
+
+        info!(
+            "Entity availability changed: {} ({})",
+            if available { "online" } else { "offline" },
+            self.power_entity_config.power_entity
+        );
 
         let _ = self
             .event_tx
@@ -313,7 +327,7 @@ impl MqttClient {
             .publish(topic.clone(), QoS::AtLeastOnce, false, payload)
             .await?;
 
-        eprintln!("Published to {}: {}", topic, payload);
+        info!("Published power command to {}: {}", topic, payload);
 
         let _ = self.event_tx.send(HomeAssistantEvent::CommandAcknowledged {
             entity_id: self.power_entity_config.power_entity.clone(),
@@ -339,12 +353,12 @@ impl MqttClient {
             )
             .await?;
 
-        eprintln!(
-            "Published IR command to {}: {} ({})",
+        info!(
+            "Published IR source command to {}: {}",
             self.ir_blaster_topic,
-            source.display_name(),
-            payload
+            source.display_name()
         );
+        debug!("IR command payload: {}", payload);
 
         Ok(())
     }
@@ -356,7 +370,7 @@ impl MqttClient {
         if let Some(last_time) = self.last_volume_command {
             let elapsed = last_time.elapsed();
             if elapsed < Duration::from_millis(100) {
-                eprintln!(
+                warn!(
                     "Rate limiting: Skipping volume command ({}ms since last)",
                     elapsed.as_millis()
                 );
@@ -379,10 +393,11 @@ impl MqttClient {
         // T058: Update timestamp
         self.last_volume_command = Some(std::time::Instant::now());
 
-        eprintln!(
-            "Published IR command to {}: Volume Up ({})",
-            self.ir_blaster_topic, payload
+        info!(
+            "Published IR volume up command to {}",
+            self.ir_blaster_topic
         );
+        debug!("IR command payload: {}", payload);
 
         Ok(())
     }
@@ -394,7 +409,7 @@ impl MqttClient {
         if let Some(last_time) = self.last_volume_command {
             let elapsed = last_time.elapsed();
             if elapsed < Duration::from_millis(100) {
-                eprintln!(
+                warn!(
                     "Rate limiting: Skipping volume command ({}ms since last)",
                     elapsed.as_millis()
                 );
@@ -417,10 +432,11 @@ impl MqttClient {
         // T058: Update timestamp
         self.last_volume_command = Some(std::time::Instant::now());
 
-        eprintln!(
-            "Published IR command to {}: Volume Down ({})",
-            self.ir_blaster_topic, payload
+        info!(
+            "Published IR volume down command to {}",
+            self.ir_blaster_topic
         );
+        debug!("IR command payload: {}", payload);
 
         Ok(())
     }

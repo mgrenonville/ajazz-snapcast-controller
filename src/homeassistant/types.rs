@@ -2,9 +2,10 @@ use serde::{Deserialize, Serialize};
 use std::time::{Duration, Instant};
 
 /// Amplifier input source selection
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub enum AmplifierSource {
     /// Phono input (turntable)
+    #[default]
     Phono,
     /// CD player input
     CD,
@@ -49,12 +50,6 @@ impl AmplifierSource {
             AmplifierSource::Source4,
             AmplifierSource::Source5,
         ]
-    }
-}
-
-impl Default for AmplifierSource {
-    fn default() -> Self {
-        AmplifierSource::Phono
     }
 }
 

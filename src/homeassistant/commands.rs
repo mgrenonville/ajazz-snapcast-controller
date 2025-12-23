@@ -1,4 +1,4 @@
-/// IR command builders for amplifier control
+//! IR command builders for amplifier control
 
 use super::ir_codes;
 use super::types::{AmplifierSource, IrCommand};
