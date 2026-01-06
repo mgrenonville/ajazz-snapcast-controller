@@ -11,6 +11,8 @@ pub struct ConnectionSettings {
     pub server: ServerConfig,
     pub room: RoomConfig,
     pub homeassistant: Option<HomeAssistantConfig>,
+    #[serde(default)]
+    pub device: DeviceConfig,
 }
 
 impl ConnectionSettings {
@@ -66,6 +68,27 @@ pub struct ServerConfig {
 pub struct RoomConfig {
     /// Snapcast client ID this controller manages
     pub client_id: String,
+}
+
+/// Device hardware configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DeviceConfig {
+    /// Inactivity timeout in seconds before device sleeps (default: 60)
+    #[serde(default = "default_sleep_timeout")]
+    pub sleep_timeout_secs: u64,
+}
+
+impl Default for DeviceConfig {
+    fn default() -> Self {
+        Self {
+            sleep_timeout_secs: default_sleep_timeout(),
+        }
+    }
+}
+
+/// Default sleep timeout: 60 seconds
+fn default_sleep_timeout() -> u64 {
+    60
 }
 
 /// Configuration for Home Assistant MQTT integration

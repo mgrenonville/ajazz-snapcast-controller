@@ -31,11 +31,12 @@ mod snapcast;
 #[tokio::main]
 async fn main() {
     // Initialize tracing subscriber for structured logging
+    // Use RUST_LOG env var if set, otherwise default to INFO level
+    let env_filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
     tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::from_default_env()
-                .add_directive(tracing::Level::INFO.into()),
-        )
+        .with_env_filter(env_filter)
         .init();
 
     info!("Snapcast Controller Application");
@@ -70,8 +71,10 @@ async fn main() {
         .expect("Invalid server address");
 
     // T033: Create tokio task for hardware event listening and display updates
+    let sleep_timeout = Duration::from_secs(config.device.sleep_timeout_secs);
     let hardware_manager = std::sync::Arc::new(tokio::sync::Mutex::new(DeviceManager::new(
         hardware_event_tx,
+        sleep_timeout,
     )));
 
     // Spawn device connection/health monitoring task

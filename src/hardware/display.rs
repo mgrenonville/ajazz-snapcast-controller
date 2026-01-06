@@ -135,19 +135,7 @@ impl DisplayManager {
         message: &str,
     ) -> Result<(), HardwareError> {
         let image = self.render_text_centered(message, DEFAULT_FONT_SIZE);
-        let dynamic_image = DynamicImage::ImageRgba8(image);
-
-        device
-            .set_button_image(button, dynamic_image)
-            .await
-            .map_err(|e| HardwareError::WriteError(e.to_string()))?;
-
-        device
-            .flush()
-            .await
-            .map_err(|e| HardwareError::WriteError(e.to_string()))?;
-
-        Ok(())
+        self.send_image_to_button(device, button, image).await
     }
 
     /// Display multiline status on a specific button screen
@@ -159,19 +147,7 @@ impl DisplayManager {
         font_size: f32,
     ) -> Result<(), HardwareError> {
         let image = self.render_multiline_text(lines, font_size);
-        let dynamic_image = DynamicImage::ImageRgba8(image);
-
-        device
-            .set_button_image(button, dynamic_image)
-            .await
-            .map_err(|e| HardwareError::WriteError(e.to_string()))?;
-
-        device
-            .flush()
-            .await
-            .map_err(|e| HardwareError::WriteError(e.to_string()))?;
-
-        Ok(())
+        self.send_image_to_button(device, button, image).await
     }
 
     /// Clear all button screens

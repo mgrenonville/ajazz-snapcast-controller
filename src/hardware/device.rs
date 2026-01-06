@@ -17,14 +17,27 @@ pub struct DeviceManager {
 
     /// Channel to send hardware events
     event_tx: mpsc::UnboundedSender<HardwareEvent>,
+
+    /// Sleep state tracking
+    is_sleeping: bool,
+
+    /// Last activity timestamp (for inactivity timeout)
+    last_activity: std::time::Instant,
+
+    /// Sleep timeout duration
+    sleep_timeout: Duration,
 }
 
 impl DeviceManager {
     /// Create a new device manager
-    pub fn new(event_tx: mpsc::UnboundedSender<HardwareEvent>) -> Self {
+    pub fn new(event_tx: mpsc::UnboundedSender<HardwareEvent>, sleep_timeout: Duration) -> Self {
+        info!("DeviceManager created with sleep timeout: {:?}", sleep_timeout);
         Self {
             device: None,
             event_tx,
+            is_sleeping: false,
+            last_activity: std::time::Instant::now(),
+            sleep_timeout,
         }
     }
 
@@ -82,8 +95,66 @@ impl DeviceManager {
         info!("Hardware device disconnection detected");
         if self.device.is_some() {
             self.device = None;
+            self.is_sleeping = false;
             let _ = self.event_tx.send(HardwareEvent::DeviceDisconnected);
         }
+    }
+
+    /// Reset inactivity timer (called on user activity)
+    pub fn reset_activity_timer(&mut self) {
+        debug!("Activity timer reset - device will sleep after {:?} of inactivity", self.sleep_timeout);
+        self.last_activity = std::time::Instant::now();
+    }
+
+    /// Check if device should sleep due to inactivity
+    pub fn should_sleep(&self) -> bool {
+        let elapsed = self.last_activity.elapsed();
+        let should_sleep = !self.is_sleeping && elapsed >= self.sleep_timeout;
+
+        if should_sleep {
+            debug!("Device should sleep: elapsed={:?}, timeout={:?}, is_sleeping={}",
+                   elapsed, self.sleep_timeout, self.is_sleeping);
+        }
+
+        should_sleep
+    }
+
+    /// Put device to sleep
+    pub async fn sleep(&mut self) -> Result<(), HardwareError> {
+        if self.is_sleeping {
+            debug!("Device already sleeping, skipping");
+            return Ok(());
+        }
+
+        if let Some(device) = &self.device {
+            info!("🌙 Putting device to sleep after {:?} of inactivity", self.last_activity.elapsed());
+            device
+                .sleep()
+                .await
+                .map_err(|e| HardwareError::WriteError(e.to_string()))?;
+            self.is_sleeping = true;
+            info!("✓ Device is now sleeping");
+        } else {
+            debug!("Cannot sleep - no device connected");
+        }
+        Ok(())
+    }
+
+    /// Wake device from sleep
+    pub fn wake(&mut self) {
+        if self.is_sleeping {
+            info!("☀️ Device waking from sleep");
+            self.is_sleeping = false;
+            self.reset_activity_timer();
+            info!("✓ Device is now awake");
+        } else {
+            debug!("Wake called but device was not sleeping");
+        }
+    }
+
+    /// Check if device is sleeping
+    pub fn is_sleeping(&self) -> bool {
+        self.is_sleeping
     }
 
     /// Poll for device connection with retry logic
@@ -210,7 +281,6 @@ impl DeviceConnectionHandler {
         let mut event_poll_interval = tokio::time::interval(Duration::from_millis(10));
 
         loop {
-            debug!("Hardware connection lifecycle loop iteration");
             tokio::select! {
                 // Health check timer
                 _ = health_check_interval.tick() => {
@@ -244,6 +314,30 @@ impl DeviceConnectionHandler {
         }
     }
 
+    /// Run sleep check loop in parallel (separate task)
+    async fn sleep_check_loop(manager: std::sync::Arc<tokio::sync::Mutex<DeviceManager>>) {
+        let mut sleep_check_interval = tokio::time::interval(Duration::from_secs(1));
+
+        loop {
+            sleep_check_interval.tick().await;
+
+            let mut manager_guard = manager.lock().await;
+            let elapsed = manager_guard.last_activity.elapsed();
+            let timeout = manager_guard.sleep_timeout;
+            let is_sleeping = manager_guard.is_sleeping();
+
+            debug!("Sleep check: elapsed={:?}, timeout={:?}, is_sleeping={}, should_sleep={}",
+                   elapsed, timeout, is_sleeping, manager_guard.should_sleep());
+
+            if manager_guard.should_sleep() {
+                debug!("Sleep conditions met, calling sleep()");
+                if let Err(e) = manager_guard.sleep().await {
+                    error!("Failed to put device to sleep: {}", e);
+                }
+            }
+        }
+    }
+
     /// T055-T057: Poll for hardware events (knobs, buttons, encoders)
     async fn poll_hardware_events(&mut self) -> Result<(), HardwareError> {
         use ajazz_sdk::Event;
@@ -253,41 +347,96 @@ impl DeviceConnectionHandler {
             // Read events with a high poll rate for responsiveness
             match reader.read(100.0).await {
                 Ok(events) => {
-                    let manager = self.manager.lock().await;
+                    let mut manager = self.manager.lock().await;
+
+                    if !events.is_empty() {
+                        debug!("Received {} hardware events", events.len());
+                    }
+
                     for event in events {
+                        // Check if device is sleeping and this is the wake-up event
+                        let was_sleeping = manager.is_sleeping();
+
                         match event {
                             // T055: Encoder/Knob twist events
                             Event::EncoderTwist(encoder_id, delta) => {
-                                let _ = manager.event_tx.send(HardwareEvent::KnobRotated {
-                                    knob_id: encoder_id,
-                                    delta,
-                                });
+                                debug!("Event: EncoderTwist(id={}, delta={}), sleeping={}", encoder_id, delta, was_sleeping);
+                                if was_sleeping {
+                                    // Wake up and drop this event
+                                    info!("🔔 Device waking from sleep - dropping knob rotation event (id={}, delta={})", encoder_id, delta);
+                                    manager.wake();
+                                } else {
+                                    // Normal operation - send event and reset activity timer
+                                    debug!("Processing knob rotation in normal mode - resetting activity timer");
+                                    manager.reset_activity_timer();
+                                    let _ = manager.event_tx.send(HardwareEvent::KnobRotated {
+                                        knob_id: encoder_id,
+                                        delta,
+                                    });
+                                }
                             }
 
                             // T056: Page buttons
                             Event::ButtonDown(button_id) if button_id >= 6 => {
-                                let _ = manager.event_tx.send(HardwareEvent::PageButtonPressed {
-                                    page_id: button_id - 6,
-                                });
+                                debug!("Event: PageButtonDown(id={}), sleeping={}", button_id, was_sleeping);
+                                if was_sleeping {
+                                    // Wake up and drop this event
+                                    info!("🔔 Device waking from sleep - dropping page button press event (id={})", button_id);
+                                    manager.wake();
+                                } else {
+                                    // Normal operation - send event and reset activity timer
+                                    debug!("Processing page button in normal mode - resetting activity timer");
+                                    manager.reset_activity_timer();
+                                    let _ = manager.event_tx.send(HardwareEvent::PageButtonPressed {
+                                        page_id: button_id - 6,
+                                    });
+                                }
                             }
                             // T056: Button press/release events
                             Event::ButtonDown(button_id) => {
-                                let _ = manager
-                                    .event_tx
-                                    .send(HardwareEvent::ButtonPressed { button_id });
+                                debug!("Event: ButtonDown(id={}), sleeping={}", button_id, was_sleeping);
+                                if was_sleeping {
+                                    // Wake up and drop this event
+                                    info!("🔔 Device waking from sleep - dropping button press event (id={})", button_id);
+                                    manager.wake();
+                                } else {
+                                    // Normal operation - send event and reset activity timer
+                                    debug!("Processing button press in normal mode - resetting activity timer");
+                                    manager.reset_activity_timer();
+                                    let _ = manager
+                                        .event_tx
+                                        .send(HardwareEvent::ButtonPressed { button_id });
+                                }
                             }
 
                             Event::ButtonUp(button_id) => {
-                                let _ = manager
-                                    .event_tx
-                                    .send(HardwareEvent::ButtonReleased { button_id });
+                                debug!("Event: ButtonUp(id={}), sleeping={}", button_id, was_sleeping);
+                                // Button release events don't wake device or reset timer
+                                if !was_sleeping {
+                                    let _ = manager
+                                        .event_tx
+                                        .send(HardwareEvent::ButtonReleased { button_id });
+                                } else {
+                                    debug!("Ignoring button release while sleeping");
+                                }
                             }
 
                             // T057: Encoder press/release (treat as page buttons)
-                            Event::EncoderDown(_) => {}
+                            Event::EncoderDown(encoder_id) => {
+                                debug!("Event: EncoderDown(id={}), sleeping={}", encoder_id, was_sleeping);
+                                if was_sleeping {
+                                    info!("🔔 Device waking from sleep - dropping encoder press event (id={})", encoder_id);
+                                    manager.wake();
+                                } else {
+                                    debug!("Processing encoder press in normal mode - resetting activity timer");
+                                    manager.reset_activity_timer();
+                                }
+                            }
 
                             // Ignore encoder up events for now
-                            Event::EncoderUp(_) => {}
+                            Event::EncoderUp(encoder_id) => {
+                                debug!("Event: EncoderUp(id={}) - ignored", encoder_id);
+                            }
                         }
                     }
                     Ok(())
@@ -367,6 +516,12 @@ pub async fn device_monitor_loop(
     manager: std::sync::Arc<tokio::sync::Mutex<DeviceManager>>,
     poll_interval: Duration,
 ) -> Result<(), HardwareError> {
+    // Spawn sleep check loop as a separate parallel task
+    let sleep_manager = manager.clone();
+    tokio::spawn(async move {
+        DeviceConnectionHandler::sleep_check_loop(sleep_manager).await;
+    });
+
     let mut handler = DeviceConnectionHandler::new(manager, poll_interval);
 
     handler.handle_connection_lifecycle().await
