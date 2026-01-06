@@ -430,6 +430,27 @@ impl ApplicationState {
         self.amplifier.as_ref().map(|a| a.selected_source)
     }
 
+    /// Increase amplifier volume (sends IR command, updates local state)
+    pub fn amplifier_volume_up(&mut self) {
+        if let Some(ref mut amplifier) = self.amplifier {
+            amplifier.increase_volume();
+            self.last_state_change = Some(Instant::now());
+        }
+    }
+
+    /// Decrease amplifier volume (sends IR command, updates local state)
+    pub fn amplifier_volume_down(&mut self) {
+        if let Some(ref mut amplifier) = self.amplifier {
+            amplifier.decrease_volume();
+            self.last_state_change = Some(Instant::now());
+        }
+    }
+
+    /// Get current amplifier volume
+    pub fn get_amplifier_volume(&self) -> Option<u8> {
+        self.amplifier.as_ref().map(|a| a.volume)
+    }
+
     /// Get path to amplifier state file
     fn get_amplifier_state_file() -> Option<PathBuf> {
         dirs::config_dir().map(|mut path| {
@@ -439,9 +460,10 @@ impl ApplicationState {
         })
     }
 
-    /// Save selected source to file
+    /// Save selected source and volume to file
     pub fn save_selected_source(&self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(source) = self.get_selected_source()
+            && let Some(volume) = self.get_amplifier_volume()
             && let Some(state_file) = Self::get_amplifier_state_file()
         {
             // Create parent directory if it doesn't exist
@@ -449,25 +471,63 @@ impl ApplicationState {
                 fs::create_dir_all(parent)?;
             }
 
+            // Create a struct to hold both values
+            #[derive(serde::Serialize)]
+            struct AmplifierPersistentState {
+                source: AmplifierSource,
+                volume: u8,
+            }
+
+            let state = AmplifierPersistentState { source, volume };
+
             // Serialize and save
-            let json = serde_json::to_string(&source)?;
+            let json = serde_json::to_string(&state)?;
             fs::write(state_file, json)?;
         }
         Ok(())
     }
 
-    /// Load selected source from file
+    /// Load selected source and volume from file
     pub fn load_selected_source(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(state_file) = Self::get_amplifier_state_file()
             && state_file.exists()
         {
             let json = fs::read_to_string(state_file)?;
-            let source: AmplifierSource = serde_json::from_str(&json)?;
 
-            // Set the source in amplifier state
+            // Try to load new format (with volume)
+            #[derive(serde::Deserialize)]
+            struct AmplifierPersistentState {
+                source: AmplifierSource,
+                #[serde(default = "default_volume")]
+                volume: u8,
+            }
+
+            fn default_volume() -> u8 {
+                50
+            }
+
+            // Try new format first, fallback to old format (just source)
+            let (source, volume) = if let Ok(state) =
+                serde_json::from_str::<AmplifierPersistentState>(&json)
+            {
+                (state.source, state.volume)
+            } else {
+                // Fallback: old format with just source
+                let source: AmplifierSource = serde_json::from_str(&json)?;
+                (source, 50)
+            };
+
+            // Set the source and volume in amplifier state
             self.set_selected_source(source);
+            if let Some(ref mut amplifier) = self.amplifier {
+                amplifier.set_volume(volume);
+            }
 
-            info!("Loaded amplifier source: {}", source.display_name());
+            info!(
+                "Loaded amplifier state: source={}, volume={}%",
+                source.display_name(),
+                volume
+            );
         }
         Ok(())
     }

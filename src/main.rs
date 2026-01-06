@@ -266,6 +266,7 @@ async fn handle_hardware_event(
                         if delta > 0 {
                             for _ in 0..delta {
                                 debug!("Knob {} rotated up - sending amplifier volume up", knob_id);
+                                state.amplifier_volume_up();
                                 let _ =
                                     homeassistant_command_tx.send(HomeAssistantCommand::VolumeUp);
                             }
@@ -275,11 +276,13 @@ async fn handle_hardware_event(
                                     "Knob {} rotated down - sending amplifier volume down",
                                     knob_id
                                 );
+                                state.amplifier_volume_down();
                                 let _ =
                                     homeassistant_command_tx.send(HomeAssistantCommand::VolumeDown);
                             }
                         }
-                        return false;
+                        // Trigger screen refresh to show updated volume
+                        return true;
                     }
                 }
                 crate::controller::state::PageView::UnifiedSourceSelection => {
@@ -590,11 +593,13 @@ fn build_display_command(state: &ApplicationState) -> Option<HardwareCommand> {
                 .get_selected_source()
                 .map(|s| s.display_name())
                 .unwrap_or("Unknown");
+            let volume = state.get_amplifier_volume().unwrap_or(50);
 
             let layout = AmplifierControlPageLayout::new(
                 amplifier_state.power_on,
                 state.homeassistant_connected,
                 selected_source,
+                volume,
                 None, // No error for now
             );
             Some(HardwareCommand::UpdateAmplifierPage(layout))

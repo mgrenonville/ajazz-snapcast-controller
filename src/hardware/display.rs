@@ -332,8 +332,13 @@ impl DisplayManager {
         self.display_status(device, 4, &layout.info_text).await?;
         sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
 
-        // Button 5: Page indicator
-        self.display_status(device, 5, &layout.page_indicator)
+        // Button 5: Volume display (similar to Snapcast volume rendering)
+        let volume = layout
+            .volume_display
+            .trim_end_matches('%')
+            .parse()
+            .unwrap_or(50);
+        self.render_amplifier_volume_screen(device, 5, volume)
             .await?;
 
         Ok(())
@@ -352,6 +357,19 @@ impl DisplayManager {
 
         self.display_multiline_status(device, button, &lines, 12.0)
             .await
+    }
+
+    /// Render amplifier volume percentage on button screen (similar to Snapcast volume)
+    pub async fn render_amplifier_volume_screen(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        button: u8,
+        volume: u8,
+    ) -> Result<(), HardwareError> {
+        let mut image = self.create_blank_image();
+        self.draw_top_label(&mut image, "VOLUME", 10.0, 5);
+        self.draw_centered_text(&mut image, &format!("{}%", volume), 24.0, 5);
+        self.send_image_to_button(device, button, image).await
     }
 
 }
@@ -711,8 +729,8 @@ pub struct AmplifierControlPageLayout {
     /// Info/help text (button 4)
     pub info_text: String,
 
-    /// Page indicator (button 5)
-    pub page_indicator: String,
+    /// Amplifier volume display (button 5)
+    pub volume_display: String,
 }
 
 impl AmplifierControlPageLayout {
@@ -721,6 +739,7 @@ impl AmplifierControlPageLayout {
         power_on: Option<bool>,
         connected: bool,
         selected_source: &str,
+        volume: u8,
         error: Option<String>,
     ) -> Self {
         let power_status = match power_on {
@@ -735,13 +754,15 @@ impl AmplifierControlPageLayout {
             "Disconnected".to_string()
         };
 
+        let volume_display = format!("{}%", volume);
+
         Self {
             power_status,
             connection_status,
             selected_source: selected_source.to_string(),
             error_message: error,
             info_text: "Amplifier".to_string(),
-            page_indicator: "Amp".to_string(),
+            volume_display,
         }
     }
 }
