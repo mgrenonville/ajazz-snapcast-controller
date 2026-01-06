@@ -121,13 +121,8 @@ async fn main() {
 
     // T038: Create Home Assistant MQTT client task (if configured)
     let _homeassistant_task = if let Some(ref ha_config) = config.homeassistant {
-        let (mqtt_client, eventloop) = homeassistant::client::MqttClient::new(
-            ha_config.clone(),
-            homeassistant_event_tx,
-            homeassistant_command_rx,
-        );
-
-        // Load persisted amplifier state
+        // Load persisted amplifier state BEFORE creating MQTT client
+        // so we can pass the initial power state to the client
         if let Err(e) = app_state.load_selected_source() {
             warn!("Failed to load amplifier state: {}", e);
         }
@@ -136,6 +131,18 @@ async fn main() {
         if let Err(e) = app_state.load_unified_source_state() {
             warn!("Failed to load unified source state: {}", e);
         }
+
+        // Extract loaded power state to pass to MQTT client
+        let initial_power_state = app_state
+            .get_amplifier_state()
+            .and_then(|amp| amp.power_on);
+
+        let (mqtt_client, eventloop) = homeassistant::client::MqttClient::new(
+            ha_config.clone(),
+            homeassistant_event_tx,
+            homeassistant_command_rx,
+            initial_power_state,
+        );
 
         Some(tokio::spawn(async move {
             mqtt_client.run(eventloop).await;
@@ -281,6 +288,12 @@ async fn handle_hardware_event(
                                     homeassistant_command_tx.send(HomeAssistantCommand::VolumeDown);
                             }
                         }
+
+                        // Save amplifier state (source + volume) to disk
+                        if let Err(e) = state.save_selected_source() {
+                            warn!("Failed to save amplifier state: {}", e);
+                        }
+
                         // Trigger screen refresh to show updated volume
                         return true;
                     }

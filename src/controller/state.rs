@@ -359,6 +359,12 @@ impl ApplicationState {
                         amplifier.set_power(power_on);
                         info!("Amplifier power: {}", if power_on { "ON" } else { "OFF" });
                         self.last_state_change = Some(Instant::now());
+
+                        // Save power state to disk
+                        if let Err(e) = self.save_selected_source() {
+                            warn!("Failed to save amplifier state after power change: {}", e);
+                        }
+
                         return self.current_page == PageView::AmplifierControl;
                     }
                 }
@@ -460,10 +466,9 @@ impl ApplicationState {
         })
     }
 
-    /// Save selected source and volume to file
+    /// Save selected source, volume, and power state to file
     pub fn save_selected_source(&self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(source) = self.get_selected_source()
-            && let Some(volume) = self.get_amplifier_volume()
+        if let Some(amplifier) = self.get_amplifier_state()
             && let Some(state_file) = Self::get_amplifier_state_file()
         {
             // Create parent directory if it doesn't exist
@@ -471,14 +476,19 @@ impl ApplicationState {
                 fs::create_dir_all(parent)?;
             }
 
-            // Create a struct to hold both values
+            // Create a struct to hold all persistent values
             #[derive(serde::Serialize)]
             struct AmplifierPersistentState {
                 source: AmplifierSource,
                 volume: u8,
+                power_on: Option<bool>,
             }
 
-            let state = AmplifierPersistentState { source, volume };
+            let state = AmplifierPersistentState {
+                source: amplifier.selected_source,
+                volume: amplifier.volume,
+                power_on: amplifier.power_on,
+            };
 
             // Serialize and save
             let json = serde_json::to_string(&state)?;
@@ -487,46 +497,52 @@ impl ApplicationState {
         Ok(())
     }
 
-    /// Load selected source and volume from file
+    /// Load selected source, volume, and power state from file
     pub fn load_selected_source(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(state_file) = Self::get_amplifier_state_file()
             && state_file.exists()
         {
             let json = fs::read_to_string(state_file)?;
 
-            // Try to load new format (with volume)
+            // Try to load new format (with volume and power)
             #[derive(serde::Deserialize)]
             struct AmplifierPersistentState {
                 source: AmplifierSource,
                 #[serde(default = "default_volume")]
                 volume: u8,
+                #[serde(default)]
+                power_on: Option<bool>,
             }
 
             fn default_volume() -> u8 {
                 50
             }
 
-            // Try new format first, fallback to old format (just source)
-            let (source, volume) = if let Ok(state) =
+            // Try new format first, fallback to old formats
+            let (source, volume, power_on) = if let Ok(state) =
                 serde_json::from_str::<AmplifierPersistentState>(&json)
             {
-                (state.source, state.volume)
+                (state.source, state.volume, state.power_on)
             } else {
                 // Fallback: old format with just source
                 let source: AmplifierSource = serde_json::from_str(&json)?;
-                (source, 50)
+                (source, 50, None)
             };
 
-            // Set the source and volume in amplifier state
+            // Set the source, volume, and power state in amplifier state
             self.set_selected_source(source);
             if let Some(ref mut amplifier) = self.amplifier {
                 amplifier.set_volume(volume);
+                if let Some(power) = power_on {
+                    amplifier.set_power(power);
+                }
             }
 
             info!(
-                "Loaded amplifier state: source={}, volume={}%",
+                "Loaded amplifier state: source={}, volume={}%, power={:?}",
                 source.display_name(),
-                volume
+                volume,
+                power_on
             );
         }
         Ok(())
