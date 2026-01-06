@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+use crate::homeassistant::types::AmplifierSource;
+
 /// Persistent configuration for server connectivity and room assignment
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ConnectionSettings {
@@ -118,6 +120,16 @@ impl HomeAssistantConfig {
 pub struct AmplifierPowerEntityConfig {
     /// Power switch entity ID (e.g., "switch.amplifier_power")
     pub power_entity: String,
+
+    /// Which amplifier input source Snapcast is connected to
+    /// Defaults to Spotify if not specified
+    #[serde(default = "default_snapcast_source")]
+    pub snapcast_amplifier_source: AmplifierSource,
+}
+
+/// Default value for snapcast_amplifier_source configuration field
+fn default_snapcast_source() -> AmplifierSource {
+    AmplifierSource::Spotify
 }
 
 impl AmplifierPowerEntityConfig {

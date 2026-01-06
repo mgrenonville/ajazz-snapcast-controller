@@ -331,15 +331,6 @@ pub async fn device_display_loop(
                                 error!("Failed to update status page: {}", e);
                             }
                         }
-                        HardwareCommand::UpdateStreamSelectionPage(layout) => {
-                            debug!("Updating stream selection page");
-                            if let Err(e) = display_manager
-                                .render_stream_selection_page(device, &layout)
-                                .await
-                            {
-                                error!("Failed to update stream selection page: {}", e);
-                            }
-                        }
                         HardwareCommand::UpdateAmplifierPage(layout) => {
                             debug!("Updating amplifier control page");
                             if let Err(e) = display_manager
@@ -349,13 +340,13 @@ pub async fn device_display_loop(
                                 error!("Failed to update amplifier control page: {}", e);
                             }
                         }
-                        HardwareCommand::UpdateSourceSelectionPage(layout) => {
-                            debug!("Updating source selection page");
+                        HardwareCommand::UpdateUnifiedSourceSelectionPage(layout) => {
+                            debug!("Updating unified source selection page");
                             if let Err(e) = display_manager
-                                .render_source_selection_page(device, &layout)
+                                .render_unified_source_view(device, &layout)
                                 .await
                             {
-                                error!("Failed to update source selection page: {}", e);
+                                error!("Failed to update unified source selection page: {}", e);
                             }
                         }
                         HardwareCommand::ShowError(error_msg) => {

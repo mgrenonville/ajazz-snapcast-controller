@@ -25,6 +25,7 @@ mod config;
 mod controller;
 mod hardware;
 mod homeassistant;
+mod models;
 mod snapcast;
 
 #[tokio::main]
@@ -126,6 +127,11 @@ async fn main() {
         // Load persisted amplifier state
         if let Err(e) = app_state.load_selected_source() {
             warn!("Failed to load amplifier state: {}", e);
+        }
+
+        // Load persisted unified source state
+        if let Err(e) = app_state.load_unified_source_state() {
+            warn!("Failed to load unified source state: {}", e);
         }
 
         Some(tokio::spawn(async move {
@@ -250,9 +256,8 @@ async fn handle_hardware_event(
         HardwareEvent::KnobRotated { knob_id, delta } => {
             // T055: Handle volume knob based on current page
             match state.current_page {
-                crate::controller::state::PageView::AmplifierControl
-                | crate::controller::state::PageView::SourceSelection => {
-                    // T055: On amplifier pages, control amplifier volume via IR commands
+                crate::controller::state::PageView::AmplifierControl => {
+                    // T055: On amplifier page, control amplifier volume via IR commands
                     if knob_id == 1 && state.homeassistant_connected {
                         // T060: Send appropriate IR command based on delta (positive = up, negative = down)
                         if delta > 0 {
@@ -274,8 +279,26 @@ async fn handle_hardware_event(
                         return false;
                     }
                 }
+                crate::controller::state::PageView::UnifiedSourceSelection => {
+                    // On unified source selection page, knob navigates through sources
+                    if knob_id == 1 {
+                        if delta > 0 {
+                            for _ in 0..delta {
+                                debug!("Knob {} rotated up - navigating to next source", knob_id);
+                                state.unified_source_select_next();
+                            }
+                        } else if delta < 0 {
+                            for _ in 0..delta.abs() {
+                                debug!("Knob {} rotated down - navigating to previous source", knob_id);
+                                state.unified_source_select_previous();
+                            }
+                        }
+                        // Trigger screen refresh to show new selection
+                        return true;
+                    }
+                }
                 _ => {
-                    // On other pages (Status, StreamSelection), control Snapcast volume
+                    // On other pages (Status), control Snapcast volume
                     if let Some((client_id, new_volume)) = state.handle_knob_rotated(knob_id, delta)
                     {
                         debug!(
@@ -322,30 +345,6 @@ async fn handle_hardware_event(
                         return false;
                     }
                 }
-                crate::controller::state::PageView::StreamSelection => {
-                    // T071: On stream selection page, buttons select streams
-                    if button_id < 6 && (button_id as usize) < state.streams.len() {
-                        debug!("Button {} pressed - selecting stream", button_id);
-                        state.selected_stream_index = button_id as usize;
-
-                        // T074: Mark control command sent for latency tracking
-                        state.mark_control_command_sent();
-
-                        // T072: Send AssignStream command
-                        if let Some(room) = &state.room {
-                            let stream_id = state.streams[button_id as usize].stream_id.clone();
-                            let client_id = room.client_id.clone();
-                            let _ = snapcast_command_tx.send(SnapcastCommand::SetStream {
-                                client_id,
-                                stream_id,
-                            });
-                        }
-
-                        // Switch back to status page after selection
-                        state.current_page = crate::controller::state::PageView::Status;
-                        return true;
-                    }
-                }
                 crate::controller::state::PageView::AmplifierControl => {
                     // T032: On amplifier control page, button 0 toggles power
                     if button_id == 0 {
@@ -362,66 +361,60 @@ async fn handle_hardware_event(
                             return false;
                         }
                     }
-                    // T051: Button 2 navigates to source selection page
-                    else if button_id == 2 {
-                        debug!(
-                            "Button {} pressed - navigating to source selection",
-                            button_id
-                        );
-                        state.current_page = crate::controller::state::PageView::SourceSelection;
-                        return true;
-                    }
                 }
-                crate::controller::state::PageView::SourceSelection => {
-                    // T045: Buttons 0-4 select amplifier sources
-                    if button_id <= 4 {
-                        // T050: Validate source selection is allowed
-                        if state.can_select_source() {
-                            use crate::homeassistant::AmplifierSource;
-                            let sources = [
-                                AmplifierSource::Phono,
-                                AmplifierSource::CD,
-                                AmplifierSource::Spotify,
-                                AmplifierSource::Source4,
-                                AmplifierSource::Source5,
-                            ];
+                crate::controller::state::PageView::Settings => {
+                    // Settings page not yet implemented
+                }
+                crate::controller::state::PageView::UnifiedSourceSelection => {
+                    // Buttons 0-5 select unified sources (Snapcast streams or amplifier inputs)
+                    // T048: Use unified_source_at_button to account for scrolling
+                    if button_id < 6 {
+                        if let Some(source) = state.unified_source_at_button(button_id) {
+                        let source = source.clone();
+                        info!(
+                            "Button {} pressed - selecting unified source: {}",
+                            button_id,
+                            source.display_name()
+                        );
 
-                            if let Some(source) = sources.get(button_id as usize) {
-                                info!(
-                                    "Button {} pressed - selecting amplifier source: {}",
-                                    button_id,
-                                    source.display_name()
-                                );
+                        // Get activation commands
+                        let (amplifier_source, stream_id, client_id) =
+                            state.activate_unified_source(&source);
 
-                                // T047: Update local state
-                                state.set_selected_source(*source);
+                        // Save unified source state to file
+                        if let Err(e) = state.save_unified_source_state() {
+                            warn!("Failed to save unified source state: {}", e);
+                        }
 
-                                // T048: Persist to file
-                                if let Err(e) = state.save_selected_source() {
-                                    warn!("Failed to save selected source: {}", e);
-                                }
+                        // Save amplifier source state to file (for AmplifierControl page)
+                        if let Err(e) = state.save_selected_source() {
+                            warn!("Failed to save amplifier source state: {}", e);
+                        }
 
-                                // T046: Send IR command via MQTT
-                                let _ = homeassistant_command_tx
-                                    .send(HomeAssistantCommand::SelectSource { source: *source });
+                        // Step 1: Switch amplifier input (always needed)
+                        let _ = homeassistant_command_tx
+                            .send(HomeAssistantCommand::SelectSource {
+                                source: amplifier_source,
+                            });
 
-                                // T051: Navigate back to amplifier control page
-                                state.current_page =
-                                    crate::controller::state::PageView::AmplifierControl;
+                        // Step 2: If this is a Snapcast stream, also send stream selection command
+                        if let (Some(stream_id), Some(client_id)) = (stream_id, client_id) {
+                            let _ = snapcast_command_tx.send(SnapcastCommand::SetStream {
+                                client_id,
+                                stream_id,
+                            });
+                        }
 
-                                return true;
-                            }
-                        } else {
-                            // T052: Error handling
-                            warn!("Cannot select source: Home Assistant not connected");
-                            return false;
+                        // Stay on unified source selection page to show the selection
+                        // Screen will refresh automatically to show the updated selection
+                        return true;
                         }
                     }
                 }
-                _ => {}
             }
         }
         // T070: Page button press handling for page switching
+        // T050: Updated to include UnifiedSourceSelection page
         HardwareEvent::PageButtonPressed { page_id } => {
             debug!("Page button {} pressed", page_id);
             match page_id {
@@ -431,12 +424,12 @@ async fn handle_hardware_event(
                     return true;
                 }
                 1 => {
-                    // Page button 1: Stream selection page
-                    state.current_page = crate::controller::state::PageView::StreamSelection;
+                    // Page button 1: Unified source selection page (Snapcast streams + amplifier inputs)
+                    state.current_page = crate::controller::state::PageView::UnifiedSourceSelection;
                     return true;
                 }
                 2 => {
-                    // Page button 1: Stream selection page
+                    // Page button 2: Amplifier control page
                     state.current_page = crate::controller::state::PageView::AmplifierControl;
                     return true;
                 }
@@ -577,21 +570,15 @@ fn build_status_layout(state: &ApplicationState) -> Option<StatusPageLayout> {
 
 /// Build appropriate HardwareCommand based on current page view
 fn build_display_command(state: &ApplicationState) -> Option<HardwareCommand> {
-    use crate::hardware::display::{SourceSelectionPageLayout, StreamSelectionPageLayout};
+    use crate::hardware::display::{
+        UnifiedSourceSelectionPageLayout,
+    };
 
     match state.current_page {
         crate::controller::state::PageView::Status => {
             // Build and send status page layout
             let layout = build_status_layout(state)?;
             Some(HardwareCommand::UpdateStatusPage(layout))
-        }
-        crate::controller::state::PageView::StreamSelection => {
-            // Build and send stream selection page layout
-            let layout = StreamSelectionPageLayout::from_streams(
-                &state.streams,
-                state.selected_stream_index,
-            );
-            Some(HardwareCommand::UpdateStreamSelectionPage(layout))
         }
         crate::controller::state::PageView::AmplifierControl => {
             // Build and send amplifier control page layout
@@ -609,11 +596,23 @@ fn build_display_command(state: &ApplicationState) -> Option<HardwareCommand> {
             );
             Some(HardwareCommand::UpdateAmplifierPage(layout))
         }
-        crate::controller::state::PageView::SourceSelection => {
-            // Build and send source selection page layout
-            let selected_source = state.get_selected_source()?;
-            let layout = SourceSelectionPageLayout::new(selected_source);
-            Some(HardwareCommand::UpdateSourceSelectionPage(layout))
+        crate::controller::state::PageView::UnifiedSourceSelection => {
+            // Build and send unified source selection page layout
+            let sources = state.unified_sources_all();
+
+            // Highlight the currently ACTIVE source (what's playing now)
+            // not just the navigation cursor position
+            let selected_index = state
+                .unified_source_active()
+                .and_then(|active| {
+                    sources
+                        .iter()
+                        .position(|s| s.identifier() == active.identifier())
+                })
+                .unwrap_or(0);
+
+            let layout = UnifiedSourceSelectionPageLayout::from_sources(sources, selected_index);
+            Some(HardwareCommand::UpdateUnifiedSourceSelectionPage(layout))
         }
         _ => {
             // Other pages not yet implemented

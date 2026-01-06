@@ -3,6 +3,7 @@
 use crate::config::settings::ConnectionSettings;
 use crate::homeassistant::AmplifierSource;
 use crate::homeassistant::types::{AmplifierState, HomeAssistantEvent};
+use crate::models::UnifiedSourceCollection;
 use crate::snapcast::types::{AudioStream, RoomState};
 use std::fs;
 use std::path::PathBuf;
@@ -33,6 +34,9 @@ pub struct ApplicationState {
     /// Amplifier state (None if Home Assistant not configured or disconnected)
     pub amplifier: Option<AmplifierState>,
 
+    /// Unified source collection (Snapcast streams + amplifier inputs)
+    pub unified_sources: UnifiedSourceCollection,
+
     /// UI state for stream selection (index into streams vec)
     pub selected_stream_index: usize,
 
@@ -55,17 +59,15 @@ pub enum PageView {
     /// Show room volume, mute status, current stream
     Status,
 
-    /// Show list of available streams for selection
-    StreamSelection,
-
     /// Show connection status, server address
     Settings,
 
     /// Show amplifier power and source control
     AmplifierControl,
 
-    /// T044: Show amplifier source selection (Phono, CD, Spotify, etc.)
-    SourceSelection,
+    /// Show unified source selection (Snapcast streams + amplifier inputs)
+    /// Replaces deprecated StreamSelection and SourceSelection pages (T051, T052)
+    UnifiedSourceSelection,
 }
 
 impl ApplicationState {
@@ -78,6 +80,16 @@ impl ApplicationState {
             None
         };
 
+        // Determine Snapcast amplifier source from config
+        let snapcast_amplifier_source = config
+            .homeassistant
+            .as_ref()
+            .map(|ha| ha.amplifier.snapcast_amplifier_source)
+            .unwrap_or(AmplifierSource::Spotify);
+
+        // Initialize unified source collection (will be populated on server connection)
+        let unified_sources = UnifiedSourceCollection::new(Vec::new(), snapcast_amplifier_source);
+
         Self {
             config,
             room: None,
@@ -86,6 +98,7 @@ impl ApplicationState {
             server_connected: false,
             homeassistant_connected: false,
             amplifier,
+            unified_sources,
             selected_stream_index: 0,
             current_page: PageView::Status,
             last_state_change: None,
@@ -116,7 +129,10 @@ impl ApplicationState {
 
     /// Update available streams
     pub fn update_streams(&mut self, streams: Vec<AudioStream>) {
-        self.streams = streams;
+        self.streams = streams.clone();
+
+        // Update unified source collection with new Snapcast streams
+        self.unified_sources.update_snapcast_streams(streams);
     }
 
     /// T049: Handle ClientVolumeChanged event
@@ -457,12 +473,12 @@ impl ApplicationState {
     }
 
     /// T063: Navigate to next page in the main page cycle
-    /// Cycle: Status → StreamSelection → AmplifierControl → Status
-    /// Note: SourceSelection is a sub-page and not part of the main cycle
+    /// Cycle: Status → UnifiedSourceSelection → AmplifierControl → Status
+    /// Legacy: StreamSelection and SourceSelection are sub-pages
     pub fn next_page(&mut self) {
         self.current_page = match self.current_page {
-            PageView::Status => PageView::StreamSelection,
-            PageView::StreamSelection => {
+            PageView::Status => PageView::UnifiedSourceSelection,
+            PageView::UnifiedSourceSelection => {
                 // Only go to AmplifierControl if Home Assistant is configured
                 if self.amplifier.is_some() {
                     PageView::AmplifierControl
@@ -470,13 +486,13 @@ impl ApplicationState {
                     PageView::Status
                 }
             }
-            PageView::AmplifierControl | PageView::SourceSelection => PageView::Status,
+            PageView::AmplifierControl => PageView::Status,
             PageView::Settings => PageView::Status, // Settings not implemented yet
         };
     }
 
     /// T064: Navigate to previous page in the main page cycle
-    /// Cycle: Status → AmplifierControl → StreamSelection → Status
+    /// Cycle: Status ← AmplifierControl ← UnifiedSourceSelection ← Status
     pub fn previous_page(&mut self) {
         self.current_page = match self.current_page {
             PageView::Status => {
@@ -484,12 +500,159 @@ impl ApplicationState {
                 if self.amplifier.is_some() {
                     PageView::AmplifierControl
                 } else {
-                    PageView::StreamSelection
+                    PageView::UnifiedSourceSelection
                 }
             }
-            PageView::StreamSelection => PageView::Status,
-            PageView::AmplifierControl | PageView::SourceSelection => PageView::StreamSelection,
+            PageView::UnifiedSourceSelection => PageView::Status,
+            PageView::AmplifierControl => PageView::UnifiedSourceSelection,
             PageView::Settings => PageView::Status, // Settings not implemented yet
         };
+    }
+
+    /// Navigate unified source selection up (wraps around)
+    pub fn unified_source_select_previous(&mut self) {
+        self.unified_sources.select_previous();
+        self.last_state_change = Some(Instant::now());
+    }
+
+    /// Navigate unified source selection down (wraps around)
+    pub fn unified_source_select_next(&mut self) {
+        self.unified_sources.select_next();
+        self.last_state_change = Some(Instant::now());
+    }
+
+    /// Get currently selected unified source (for UI navigation)
+    pub fn unified_source_selected(&self) -> Option<&crate::models::UnifiedSource> {
+        self.unified_sources.selected_source()
+    }
+
+    /// Get all available unified sources
+    pub fn unified_sources_all(&self) -> &[crate::models::UnifiedSource] {
+        self.unified_sources.all_sources()
+    }
+
+    /// Get currently active unified source
+    pub fn unified_source_active(&self) -> Option<&crate::models::UnifiedSource> {
+        self.unified_sources.active_source()
+    }
+
+    /// Get unified source at a specific button position, accounting for scrolling (T048)
+    /// Returns the source that should be activated when a button is pressed
+    pub fn unified_source_at_button(&self, button_id: u8) -> Option<&crate::models::UnifiedSource> {
+        let sources = self.unified_sources.all_sources();
+        let total_sources = sources.len();
+
+        if total_sources == 0 {
+            return None;
+        }
+
+        // Calculate the same window_start logic as in the layout
+        let selected_index = self
+            .unified_source_selected()
+            .and_then(|selected| {
+                sources
+                    .iter()
+                    .position(|s| s.identifier() == selected.identifier())
+            })
+            .unwrap_or(0);
+
+        let window_start = if total_sources <= 6 {
+            0
+        } else if selected_index < 3 {
+            0
+        } else if selected_index >= total_sources - 3 {
+            total_sources.saturating_sub(6)
+        } else {
+            selected_index.saturating_sub(2)
+        };
+
+        // Map button to source index
+        let source_index = window_start + (button_id as usize);
+        sources.get(source_index)
+    }
+
+    /// Activate a unified source (returns commands to execute)
+    /// Returns: (amplifier_source, optional_stream_id, optional_client_id)
+    pub fn activate_unified_source(
+        &mut self,
+        source: &crate::models::UnifiedSource,
+    ) -> (AmplifierSource, Option<String>, Option<String>) {
+        // Get Snapcast amplifier source from config
+        let snapcast_amplifier_source = self
+            .config
+            .homeassistant
+            .as_ref()
+            .map(|ha| ha.amplifier.snapcast_amplifier_source)
+            .unwrap_or(AmplifierSource::Spotify);
+
+        // Create activation context
+        let context =
+            crate::models::SourceActivationContext::new(source, snapcast_amplifier_source);
+
+        // Get activation commands
+        let (amplifier_source, stream_id) = context.get_activation_commands();
+
+        // Get client ID if we're switching to a Snapcast stream
+        let client_id = if stream_id.is_some() {
+            self.room.as_ref().map(|r| r.client_id.clone())
+        } else {
+            None
+        };
+
+        // Update active source in collection
+        self.unified_sources.set_active(source.clone());
+
+        // Also update the AmplifierState.selected_source for backward compatibility
+        // with AmplifierControl page display
+        self.set_selected_source(amplifier_source);
+
+        // Mark state change
+        self.last_state_change = Some(Instant::now());
+
+        info!("Activating unified source: {} -> amplifier input {}",
+              source.display_name(), amplifier_source.display_name());
+
+        (amplifier_source, stream_id, client_id)
+    }
+
+    /// Save unified source state to file
+    pub fn save_unified_source_state(&self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(active_source) = self.unified_source_active() {
+            let state = crate::models::UnifiedSourceState::new(active_source.clone());
+            state.save()?;
+            debug!("Saved unified source state: {}", active_source.display_name());
+        }
+        Ok(())
+    }
+
+    /// Load unified source state from file
+    pub fn load_unified_source_state(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(state) = crate::models::UnifiedSourceState::load()? {
+            // Set the active source in the collection
+            self.unified_sources.set_active(state.active_source.clone());
+
+            // Also restore the AmplifierState.selected_source for backward compatibility
+            // Determine which amplifier input should be active based on the unified source
+            let snapcast_amplifier_source = self
+                .config
+                .homeassistant
+                .as_ref()
+                .map(|ha| ha.amplifier.snapcast_amplifier_source)
+                .unwrap_or(AmplifierSource::Spotify);
+
+            let context = crate::models::SourceActivationContext::new(
+                &state.active_source,
+                snapcast_amplifier_source,
+            );
+            let (amplifier_source, _) = context.get_activation_commands();
+            self.set_selected_source(amplifier_source);
+
+            info!(
+                "Loaded unified source state: {} -> amplifier input {}",
+                state.active_source.display_name(),
+                amplifier_source.display_name()
+            );
+        }
+        Ok(())
     }
 }

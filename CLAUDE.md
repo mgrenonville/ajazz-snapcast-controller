@@ -4,6 +4,8 @@ Auto-generated from all feature plans. Last updated: 2025-12-12
 
 ## Active Technologies
 - File-based configuration (TOML files in ~/.config or similar) (002-homeassistant-amplifier-control)
+- Rust stable (edition 2024) with async/await + tokio (async runtime), serde/serde_json (serialization), snapcast-control (Snapcast JSON-RPC client), rumqttc (MQTT client), ajazz-sdk (USB hardware) (003-unified-source-view)
+- Local JSON file persistence (`~/.config/snapcast-controller/unified_source_state.json`) (003-unified-source-view)
 
 - Rust (stable channel, edition 2021 or later) (001-snapcast-controller)
 
@@ -23,6 +25,7 @@ cargo test [ONLY COMMANDS FOR ACTIVE TECHNOLOGIES][ONLY COMMANDS FOR ACTIVE TECH
 Rust (stable channel, edition 2021 or later): Follow standard conventions
 
 ## Recent Changes
+- 003-unified-source-view: Added Rust stable (edition 2024) with async/await + tokio (async runtime), serde/serde_json (serialization), snapcast-control (Snapcast JSON-RPC client), rumqttc (MQTT client), ajazz-sdk (USB hardware)
 - 002-homeassistant-amplifier-control: Added Rust (stable channel, edition 2021 or later)
 
 - 001-snapcast-controller: Added Rust (stable channel, edition 2021 or later)

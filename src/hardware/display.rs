@@ -375,38 +375,6 @@ impl DisplayManager {
             .await
     }
 
-    /// T043: Render source selection page showing all 5 sources
-    pub async fn render_source_selection_page(
-        &self,
-        device: &Arc<AsyncAjazz>,
-        layout: &SourceSelectionPageLayout,
-    ) -> Result<(), HardwareError> {
-        debug!("Rendering source selection page: {:?}", layout);
-
-        // Get all available sources
-        use crate::homeassistant::AmplifierSource;
-        let sources = [
-            AmplifierSource::Phono,
-            AmplifierSource::CD,
-            AmplifierSource::Spotify,
-            AmplifierSource::Source4,
-            AmplifierSource::Source5,
-        ];
-
-        // Render buttons 0-4 with sources
-        for (i, source) in sources.iter().enumerate() {
-            let is_selected = *source == layout.selected_source;
-            self.render_source_button(device, i as u8, *source, is_selected)
-                .await?;
-            sleep(Duration::from_millis(SCREEN_UPDATE_DELAY_MS)).await;
-        }
-
-        // Button 5: Page indicator
-        self.display_status(device, 5, &layout.page_indicator)
-            .await?;
-
-        Ok(())
-    }
 }
 
 /// Status page layout data
@@ -692,51 +660,6 @@ impl DisplayManager {
         self.send_image_to_button(device, button, image).await
     }
 
-    /// Render complete stream selection page layout to all button screens
-    /// T069: Display available streams across 6 button screens
-    /// T066: Include page indicator
-    pub async fn render_stream_selection_page(
-        &self,
-        device: &Arc<AsyncAjazz>,
-        layout: &StreamSelectionPageLayout,
-    ) -> Result<(), HardwareError> {
-        // Render buttons 0-4 with stream names
-        for button in 0..5 {
-            self.render_stream_button(
-                device,
-                button,
-                layout.stream_names[button as usize].as_deref(),
-                layout.selected_button == Some(button),
-            )
-            .await?;
-        }
-
-        // T066: Button 5 shows stream (if available) with page indicator at bottom
-        let mut image = self.create_blank_image();
-
-        // Show stream name if available
-        if let Some(ref stream_name) = layout.stream_names[5] {
-            if layout.selected_button == Some(5) {
-                self.draw_top_label(&mut image, ">", 16.0, 2);
-            }
-
-            let display_name = if stream_name.len() > 10 {
-                format!("{}...", &stream_name[0..7])
-            } else {
-                stream_name.to_string()
-            };
-
-            self.draw_centered_text(&mut image, &display_name, 13.0, -5);
-        }
-
-        // Draw page indicator at bottom
-        self.draw_top_label(&mut image, &layout.page_indicator, 10.0, 60);
-
-        self.send_image_to_button(device, 5, image).await?;
-
-        Ok(())
-    }
-
     /// Render error message on screens
     /// T073: Display error message when command fails
     pub async fn render_error(
@@ -844,66 +767,135 @@ impl AmplifierControlPageLayout {
     }
 }
 
-/// Source selection page layout data
-/// T041: Layout for amplifier source selection page
+/// Unified source selection page layout data
+/// Layout for unified source selection page showing both Snapcast streams and amplifier inputs
 #[derive(Debug, Clone)]
-pub struct SourceSelectionPageLayout {
-    /// Currently selected source (to highlight)
-    pub selected_source: crate::homeassistant::AmplifierSource,
-
-    /// Page indicator text
-    pub page_indicator: String,
-}
-
-impl SourceSelectionPageLayout {
-    /// T041: Create a new source selection page layout
-    pub fn new(selected_source: crate::homeassistant::AmplifierSource) -> Self {
-        Self {
-            selected_source,
-            page_indicator: "Sources".to_string(),
-        }
-    }
-}
-
-/// Stream selection page layout data
-/// T069: Layout for stream selection page showing available streams
-#[derive(Debug, Clone)]
-pub struct StreamSelectionPageLayout {
-    /// Stream names for buttons 0-5 (None if no stream at that position)
-    pub stream_names: [Option<String>; 6],
+pub struct UnifiedSourceSelectionPageLayout {
+    /// Source names for buttons 0-5 (None if no source at that position)
+    pub source_names: [Option<String>; 6],
 
     /// Which button is currently selected (None if no selection)
     pub selected_button: Option<u8>,
 
-    /// T066: Page indicator text
+    /// Page indicator text
     pub page_indicator: String,
+
+    /// Index of first source in current window (for button press mapping)
+    pub window_start: usize,
 }
 
-impl StreamSelectionPageLayout {
-    /// Create a new stream selection page layout from available streams
-    /// T069: Build stream selection page layout data structure
-    pub fn from_streams(
-        streams: &[crate::snapcast::types::AudioStream],
+impl UnifiedSourceSelectionPageLayout {
+    /// Create a new unified source selection page layout from available sources
+    /// Implements scrolling logic when sources exceed 6 buttons (T048)
+    pub fn from_sources(
+        sources: &[crate::models::UnifiedSource],
         selected_index: usize,
     ) -> Self {
-        let mut stream_names: [Option<String>; 6] = Default::default();
+        let mut source_names: [Option<String>; 6] = Default::default();
+        let total_sources = sources.len();
 
-        // Fill in up to 6 streams
-        for (i, stream) in streams.iter().take(6).enumerate() {
-            stream_names[i] = Some(stream.name.clone());
+        // Calculate scroll window to keep selected item visible
+        // Window shows 6 sources at a time, scrolling to keep selection centered when possible
+        let window_start = if total_sources <= 6 {
+            // All sources fit on screen
+            0
+        } else if selected_index < 3 {
+            // Near the beginning, show first 6
+            0
+        } else if selected_index >= total_sources - 3 {
+            // Near the end, show last 6
+            total_sources.saturating_sub(6)
+        } else {
+            // In the middle, center the selection
+            selected_index.saturating_sub(2)
+        };
+
+        // Fill in sources within the current window
+        for i in 0..6 {
+            if let Some(source) = sources.get(window_start + i) {
+                source_names[i] = Some(source.display_name().to_string());
+            }
         }
 
-        // Determine selected button (if selected_index is within displayed range)
-        let selected_button = if selected_index < 6 {
-            Some(selected_index as u8)
+        // Calculate which button position the selected item appears at
+        let selected_button = if selected_index >= window_start
+            && selected_index < window_start + 6
+        {
+            Some((selected_index - window_start) as u8)
         } else {
             None
         };
 
+        // Build page indicator showing scroll position
+        let page_indicator = if total_sources <= 6 {
+            "Sources".to_string()
+        } else {
+            format!(
+                "Sources {}-{}/{}",
+                window_start + 1,
+                (window_start + 6).min(total_sources),
+                total_sources
+            )
+        };
+
         Self {
-            stream_names,
+            source_names,
             selected_button,
-            page_indicator: "Streams".to_string(),
+            page_indicator,
+            window_start,
         }
+    }
+}
+
+/// Unified source selection page rendering
+impl DisplayManager {
+    /// Render the unified source selection page to all button screens
+    pub async fn render_unified_source_view(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        layout: &UnifiedSourceSelectionPageLayout,
+    ) -> Result<(), HardwareError> {
+        debug!("Rendering unified source view: {:?}", layout);
+
+        // Buttons 0-5: Show sources (or blank if no source at that position)
+        for button in 0..6 {
+            if let Some(source_name) = &layout.source_names[button as usize] {
+                let is_selected = layout.selected_button == Some(button);
+                self.render_unified_source_button(device, button, source_name, is_selected)
+                    .await?;
+            } else {
+                self.clear_screen(device, button).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Render a single unified source button with name and selection indicator
+    async fn render_unified_source_button(
+        &self,
+        device: &Arc<AsyncAjazz>,
+        button: u8,
+        source_name: &str,
+        is_selected: bool,
+    ) -> Result<(), HardwareError> {
+        let mut image = self.create_blank_image();
+
+        // Show selection indicator at top
+        if is_selected {
+            self.draw_top_label(&mut image, ">", 14.0, 5);
+        }
+
+        // Truncate source name if too long
+        let display_name = if source_name.len() > 12 {
+            format!("{}...", &source_name[0..9])
+        } else {
+            source_name.to_string()
+        };
+
+        // Center the source name
+        self.draw_centered_text(&mut image, &display_name, 14.0, if is_selected { 8 } else { 0 });
+
+        self.send_image_to_button(device, button, image).await
     }
 }
