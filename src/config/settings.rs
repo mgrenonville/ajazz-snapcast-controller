@@ -3,12 +3,16 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 
+use crate::homeassistant::types::AmplifierSource;
+
 /// Persistent configuration for server connectivity and room assignment
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ConnectionSettings {
     pub server: ServerConfig,
     pub room: RoomConfig,
     pub homeassistant: Option<HomeAssistantConfig>,
+    #[serde(default)]
+    pub device: DeviceConfig,
 }
 
 impl ConnectionSettings {
@@ -66,6 +70,27 @@ pub struct RoomConfig {
     pub client_id: String,
 }
 
+/// Device hardware configuration
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct DeviceConfig {
+    /// Inactivity timeout in seconds before device sleeps (default: 60)
+    #[serde(default = "default_sleep_timeout")]
+    pub sleep_timeout_secs: u64,
+}
+
+impl Default for DeviceConfig {
+    fn default() -> Self {
+        Self {
+            sleep_timeout_secs: default_sleep_timeout(),
+        }
+    }
+}
+
+/// Default sleep timeout: 60 seconds
+fn default_sleep_timeout() -> u64 {
+    60
+}
+
 /// Configuration for Home Assistant MQTT integration
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct HomeAssistantConfig {
@@ -118,6 +143,16 @@ impl HomeAssistantConfig {
 pub struct AmplifierPowerEntityConfig {
     /// Power switch entity ID (e.g., "switch.amplifier_power")
     pub power_entity: String,
+
+    /// Which amplifier input source Snapcast is connected to
+    /// Defaults to Spotify if not specified
+    #[serde(default = "default_snapcast_source")]
+    pub snapcast_amplifier_source: AmplifierSource,
+}
+
+/// Default value for snapcast_amplifier_source configuration field
+fn default_snapcast_source() -> AmplifierSource {
+    AmplifierSource::Spotify
 }
 
 impl AmplifierPowerEntityConfig {

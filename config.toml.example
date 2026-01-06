@@ -37,6 +37,12 @@ ir_blaster_topic = "tasmota_17DD9F/cmnd/irsend"
 # Home Assistant entity for amplifier power state
 power_entity = "switch.amplifier_power"
 
+# Which amplifier input source is connected to Snapcast output
+# This is used by the unified source view to properly switch the amplifier
+# when selecting Snapcast streams vs. other amplifier inputs
+# Valid values: "Phono", "CD", "Spotify", "Source4", "Source5"
+snapcast_amplifier_source = "Spotify"
+
 # Note: Source selection is managed locally by the controller
 # IR commands are sent directly to the IR Blaster for:
 # - Source selection (Phono, CD, Spotify, Source 4, Source 5)

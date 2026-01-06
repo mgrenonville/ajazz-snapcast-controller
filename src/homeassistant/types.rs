@@ -119,6 +119,10 @@ pub struct AmplifierState {
     /// Currently selected input source (tracked locally, not synced from Home Assistant)
     pub selected_source: AmplifierSource,
 
+    /// Estimated volume level (0-100, tracked locally via IR commands)
+    /// Since IR is one-way, this is an estimate based on sent commands
+    pub volume: u8,
+
     /// Timestamp of last state update
     pub last_updated: Instant,
 
@@ -132,6 +136,7 @@ impl AmplifierState {
         Self {
             power_on: None,
             selected_source: AmplifierSource::default(),
+            volume: 50, // Start at middle volume
             last_updated: Instant::now(),
             availability: EntityAvailability::Unknown,
         }
@@ -147,6 +152,24 @@ impl AmplifierState {
     /// Update selected source (local state only)
     pub fn set_source(&mut self, source: AmplifierSource) {
         self.selected_source = source;
+        self.last_updated = Instant::now();
+    }
+
+    /// Increase volume by 1 (capped at 100)
+    pub fn increase_volume(&mut self) {
+        self.volume = self.volume.saturating_add(1).min(100);
+        self.last_updated = Instant::now();
+    }
+
+    /// Decrease volume by 1 (capped at 0)
+    pub fn decrease_volume(&mut self) {
+        self.volume = self.volume.saturating_sub(1);
+        self.last_updated = Instant::now();
+    }
+
+    /// Set volume directly (capped at 0-100)
+    pub fn set_volume(&mut self, volume: u8) {
+        self.volume = volume.min(100);
         self.last_updated = Instant::now();
     }
 

@@ -45,6 +45,7 @@ impl MqttClient {
         config: HomeAssistantConfig,
         event_tx: mpsc::UnboundedSender<HomeAssistantEvent>,
         command_rx: mpsc::UnboundedReceiver<HomeAssistantCommand>,
+        initial_power_state: Option<bool>,
     ) -> (Self, EventLoop) {
         let connection = HomeAssistantConnection::new(
             config.broker_address.clone(),
@@ -70,12 +71,22 @@ impl MqttClient {
 
         let (client, eventloop) = AsyncClient::new(mqtt_options, 10);
 
+        // Initialize amplifier state with loaded power state if available
+        let mut amplifier_state = AmplifierState::new();
+        if let Some(power_on) = initial_power_state {
+            amplifier_state.power_on = Some(power_on);
+            info!(
+                "Initialized MQTT client with loaded power state: {}",
+                if power_on { "ON" } else { "OFF" }
+            );
+        }
+
         let mqtt_client = Self {
             client,
             connection,
             power_entity_config: config.amplifier,
             ir_blaster_topic: config.ir_blaster_topic,
-            amplifier_state: AmplifierState::new(),
+            amplifier_state,
             event_tx,
             command_rx,
             last_volume_command: None,
