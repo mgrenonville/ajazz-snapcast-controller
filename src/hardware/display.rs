@@ -72,7 +72,10 @@ impl DisplayManager {
         button: u8,
         image: RgbaImage,
     ) -> Result<(), HardwareError> {
-        let dynamic_image = DynamicImage::ImageRgba8(image);
+        // Convert to DynamicImage and rotate 90° clockwise to correct screen orientation
+        // (screens are physically rotated 90° counterclockwise)
+        let dynamic_image = DynamicImage::ImageRgba8(image).rotate90();
+
         device
             .set_button_image(button, dynamic_image)
             .await
